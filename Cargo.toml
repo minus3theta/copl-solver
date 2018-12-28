@@ -1,0 +1,8 @@
+[package]
+name = "copl-solver"
+version = "0.1.0"
+authors = ["minus3theta <yone_j_synthesis@yahoo.co.jp>"]
+
+[dependencies]
+combine = "3.6.3"
+combine-language = "3.0.1"
