@@ -1,8 +1,8 @@
 #[macro_use]
 extern crate combine;
 extern crate combine_language;
-use combine::{satisfy, Parser, Stream, ParseResult, many1, from_str, parser};
-use combine::parser::char::{alpha_num, letter, string, digit};
+use combine::{satisfy, Parser, Stream, parser, ParseError};
+use combine::parser::char::{alpha_num, letter, string};
 use combine_language::{LanguageEnv, LanguageDef, Identifier};
 
 #[derive(Debug, PartialEq)]
@@ -34,7 +34,7 @@ fn calc_expr_env<'a, I>() -> LanguageEnv<'a, I>
     ident: Identifier {
       start: letter(),
       rest: alpha_num(),
-      reserved: ["if", "then", "else", "let", "rec", "in", "fun", "match", "with"]
+      reserved: ["true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with"]
         .iter()
         .map(|x| (*x).into())
         .collect(),
@@ -73,15 +73,28 @@ fn calc_env_env<'a, I>() -> LanguageEnv<'a, I>
   })
 }
 
-fn expr<I>(mut input: I) -> ParseResult<Box<Expr>, I>
-  where
-    I: Stream<Item=char>,
-    <I as combine::StreamOnce>::Error: combine::ParseError<char, <I as combine::StreamOnce>::Range, <I as combine::StreamOnce>::Position>
-{
-  let expr_env = calc_expr_env();
-  let mut integer = expr_env.integer().map(|x| Box::new(Expr::Int(x)));
-  integer.parse_stream(&mut input)
+parser!{
+  fn expr['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Box<Expr>
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    choice!(
+      expr_env.reserved("true").map(|_| Box::new(Expr::Bool(true))),
+      expr_env.reserved("false").map(|_| Box::new(Expr::Bool(false))),
+      expr_env.integer().map(|x| Box::new(Expr::Int(x))),
+      expr_env.identifier().map(|x| Box::new(Expr::Ident(x)))
+    )
+  }
 }
 
 fn main() {
+  let mut input = String::new();
+  std::io::stdin().read_line(&mut input).unwrap();
+  let input: &str = &input;
+  let expr_env = calc_expr_env();
+  println!("{:?}", expr(expr_env).easy_parse(input));
 }
