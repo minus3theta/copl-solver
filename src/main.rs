@@ -1,4 +1,5 @@
 pub mod expr;
+pub mod evalml1;
 
 #[macro_use]
 extern crate combine;
@@ -12,6 +13,6 @@ fn main() {
   let input: &str = &input;
   println!(
     "{:?}",
-    expr::expr_parser(expr::calc_expr_env()).easy_parse(input)
+    evalml1::judgement_parser().easy_parse(input)
   );
 }
