@@ -4,7 +4,7 @@ extern crate combine_language;
 
 use combine::parser::char::{alpha_num, letter, string};
 use combine::{parser, satisfy, ParseError, Parser, Stream};
-use combine_language::{Identifier, LanguageDef, LanguageEnv, Assoc, Fixity, expression_parser};
+use combine_language::{expression_parser, Assoc, Fixity, Identifier, LanguageDef, LanguageEnv};
 
 #[derive(Debug, PartialEq)]
 pub enum Expr {
@@ -66,7 +66,7 @@ where
 }
 
 parser! {
-  fn expr_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Expr
+  fn expr_parser[I]()(I) -> Expr
   where [
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -75,7 +75,7 @@ parser! {
   ]
   {
     choice!(
-      expression_parser(term_parser(expr_env), op_parser(expr_env), op)
+      expression_parser(term_parser(calc_expr_env()), op_parser(calc_expr_env()), op)
     )
   }
 }
@@ -93,7 +93,8 @@ parser! {
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
       expr_env.integer().map(|x| Expr::Int(x)),
-      expr_env.identifier().map(|x| Expr::Ident(x))
+      expr_env.identifier().map(|x| Expr::Ident(x)),
+      expr_env.parens(expr_parser())
     )
   }
 }
@@ -130,6 +131,5 @@ fn main() {
   let mut input = String::new();
   std::io::stdin().read_line(&mut input).unwrap();
   let input: &str = &input;
-  let expr_env: LanguageEnv<_> = calc_expr_env();
-  println!("{:?}", expr_parser(expr_env).easy_parse(input));
+  println!("{:?}", expr_parser().easy_parse(input));
 }
