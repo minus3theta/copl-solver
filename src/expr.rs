@@ -194,6 +194,43 @@ parser! {
   }
 }
 
+use std::fmt;
+
+impl fmt::Display for Expr {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    use self::Expr::*;
+    match self {
+      Bool(b) => b.fmt(f),
+      Int(i) => i.fmt(f),
+      Ident(s) => s.fmt(f),
+      Plus(l, r) => write!(f, "({} + {})", l, r),
+      Minus(l, r) => write!(f, "({} - {})", l, r),
+      Times(l, r) => write!(f, "({} * {})", l, r),
+      Lt(l, r) => write!(f, "({} < {})", l, r),
+      If(ep, et, ef) => write!(f, "(if {} then {} else {})", ep, et, ef),
+      Let(_, _, _) => unimplemented!(),
+      Fun(_, _) => unimplemented!(),
+      App(_, _) => unimplemented!(),
+      LetRec(_, _, _, _) => unimplemented!(),
+      Nil => write!(f, "[]"),
+      Cons(_, _) => unimplemented!(),
+      Match(_, _, _, _, _) => unimplemented!(),
+    }
+  }
+}
+
+impl fmt::Display for Value {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    use self::Value::*;
+    match self {
+      VBool(b) => b.fmt(f),
+      VInt(i) => i.fmt(f),
+      VNil => write!(f, "[]"),
+      VCons(_, _) => unimplemented!(),
+    }
+  }
+}
+
 #[cfg(test)]
 mod test {
   use super::Expr::*;
