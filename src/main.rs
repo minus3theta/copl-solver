@@ -30,6 +30,7 @@ pub enum Op {
   Plus,
   Minus,
   Aster,
+  Cons,
   Langle,
 }
 
@@ -55,9 +56,12 @@ where
       .collect(),
     },
     op: Identifier {
-      start: satisfy(|c| "+-*<".chars().any(|x| x == c)),
-      rest: satisfy(|c| "+-*<".chars().any(|x| x == c)),
-      reserved: ["+", "-", "*", "<"].iter().map(|x| (*x).into()).collect(),
+      start: satisfy(|c| "+-*<:".chars().any(|x| x == c)),
+      rest: satisfy(|c| "+-*<:".chars().any(|x| x == c)),
+      reserved: ["+", "-", "*", "<", "::"]
+        .iter()
+        .map(|x| (*x).into())
+        .collect(),
     },
     comment_start: string("/*").map(|_| ()),
     comment_end: string("*/").map(|_| ()),
@@ -112,7 +116,8 @@ parser! {
       expr_env.reserved_op("+").map(|_| (Op::Plus, Assoc { precedence: 6, fixity: Fixity::Left})),
       expr_env.reserved_op("-").map(|_| (Op::Minus, Assoc { precedence: 6, fixity: Fixity::Left})),
       expr_env.reserved_op("*").map(|_| (Op::Aster, Assoc { precedence: 7, fixity: Fixity::Left})),
-      expr_env.reserved_op("<").map(|_| (Op::Plus, Assoc { precedence: 5, fixity: Fixity::Left}))
+      expr_env.reserved_op("<").map(|_| (Op::Plus, Assoc { precedence: 4, fixity: Fixity::Left})),
+      expr_env.reserved_op("::").map(|_| (Op::Cons, Assoc { precedence: 5, fixity: Fixity::Right}))
     )
   }
 }
@@ -123,6 +128,7 @@ fn op(l: Expr, o: Op, r: Expr) -> Expr {
     Op::Plus => Plus(Box::new(l), Box::new(r)),
     Op::Minus => Minus(Box::new(l), Box::new(r)),
     Op::Aster => Times(Box::new(l), Box::new(r)),
+    Op::Cons => Cons(Box::new(l), Box::new(r)),
     Op::Langle => Lt(Box::new(l), Box::new(r)),
   }
 }
