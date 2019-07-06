@@ -169,6 +169,31 @@ pub fn ite(p: Expr, t: Expr, f: Expr) -> Expr {
   Expr::If(Box::new(p), Box::new(t), Box::new(f))
 }
 
+#[derive(Debug, PartialEq)]
+pub enum Value {
+  VBool(bool),
+  VInt(i64),
+  VCons(Box<Value>, Box<Value>),
+  VNil,
+}
+
+parser! {
+  pub fn value_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Value
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    choice!(
+      expr_env.reserved("true").map(|_| Value::VBool(true)),
+      expr_env.reserved("false").map(|_| Value::VBool(false)),
+      expr_env.integer().map(Value::VInt)
+    )
+  }
+}
+
 #[cfg(test)]
 mod test {
   use super::Expr::*;
@@ -228,6 +253,22 @@ mod test {
         ),
         ""
       ))
+    )
+  }
+  #[test]
+  fn parse_value_bool() {
+    let s = "true";
+    assert_eq!(
+      value_parser(calc_expr_env()).easy_parse(s),
+      Ok((Value::VBool(true), ""))
+    )
+  }
+  #[test]
+  fn parse_value_int() {
+    let s = "42";
+    assert_eq!(
+      value_parser(calc_expr_env()).easy_parse(s),
+      Ok((Value::VInt(42), ""))
     )
   }
 }
