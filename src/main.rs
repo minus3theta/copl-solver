@@ -1,9 +1,10 @@
 #[macro_use]
 extern crate combine;
 extern crate combine_language;
-use combine::{satisfy, Parser, Stream, parser, ParseError};
+
 use combine::parser::char::{alpha_num, letter, string};
-use combine_language::{LanguageEnv, LanguageDef, Identifier};
+use combine::{parser, satisfy, ParseError, Parser, Stream};
+use combine_language::{Identifier, LanguageDef, LanguageEnv};
 
 #[derive(Debug, PartialEq)]
 pub enum Expr {
@@ -25,24 +26,30 @@ pub enum Expr {
 }
 
 fn calc_expr_env<'a, I>() -> LanguageEnv<'a, I>
-  where
-    I: 'a,
-    I: Stream<Item=char>,
-    <I as combine::StreamOnce>::Error: combine::ParseError<char, <I as combine::StreamOnce>::Range, <I as combine::StreamOnce>::Position>
+where
+  I: 'a,
+  I: Stream<Item = char>,
+  <I as combine::StreamOnce>::Error: combine::ParseError<
+    char,
+    <I as combine::StreamOnce>::Range,
+    <I as combine::StreamOnce>::Position,
+  >,
 {
   LanguageEnv::new(LanguageDef {
     ident: Identifier {
       start: letter(),
       rest: alpha_num(),
-      reserved: ["true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with"]
-        .iter()
-        .map(|x| (*x).into())
-        .collect(),
+      reserved: [
+        "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
+      ]
+      .iter()
+      .map(|x| (*x).into())
+      .collect(),
     },
     op: Identifier {
       start: satisfy(|c| "+-*<".chars().any(|x| x == c)),
       rest: satisfy(|c| "+-*<".chars().any(|x| x == c)),
-      reserved: ["+", "-", "*", "<"].iter().map(|x| (*x).into()).collect()
+      reserved: ["+", "-", "*", "<"].iter().map(|x| (*x).into()).collect(),
     },
     comment_start: string("/*").map(|_| ()),
     comment_end: string("*/").map(|_| ()),
@@ -51,10 +58,14 @@ fn calc_expr_env<'a, I>() -> LanguageEnv<'a, I>
 }
 
 fn calc_env_env<'a, I>() -> LanguageEnv<'a, I>
-  where
-    I: 'a,
-    I: Stream<Item=char>,
-    <I as combine::StreamOnce>::Error: combine::ParseError<char, <I as combine::StreamOnce>::Range, <I as combine::StreamOnce>::Position>
+where
+  I: 'a,
+  I: Stream<Item = char>,
+  <I as combine::StreamOnce>::Error: combine::ParseError<
+    char,
+    <I as combine::StreamOnce>::Range,
+    <I as combine::StreamOnce>::Position,
+  >,
 {
   LanguageEnv::new(LanguageDef {
     ident: Identifier {
@@ -65,7 +76,7 @@ fn calc_env_env<'a, I>() -> LanguageEnv<'a, I>
     op: Identifier {
       start: satisfy(|c| ",=".chars().any(|x| x == c)),
       rest: satisfy(|c| ",=".chars().any(|x| x == c)),
-      reserved: [",", "="].iter().map(|x| (*x).into()).collect()
+      reserved: [",", "="].iter().map(|x| (*x).into()).collect(),
     },
     comment_start: string("/*").map(|_| ()),
     comment_end: string("*/").map(|_| ()),
@@ -73,7 +84,7 @@ fn calc_env_env<'a, I>() -> LanguageEnv<'a, I>
   })
 }
 
-parser!{
+parser! {
   fn expr['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Box<Expr>
   where [
     I: Stream<Item = char>,
