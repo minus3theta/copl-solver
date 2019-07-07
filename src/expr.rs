@@ -169,7 +169,7 @@ pub fn ite(p: Expr, t: Expr, f: Expr) -> Expr {
   Expr::If(Box::new(p), Box::new(t), Box::new(f))
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Value {
   VBool(bool),
   VInt(i64),
