@@ -1,5 +1,5 @@
 use combine::parser::char::{alpha_num, letter, string};
-use combine::{char::spaces, optional, parser, satisfy, token, ParseError, Parser, Stream};
+use combine::{char::spaces, optional, parser, satisfy, sep_by, token, ParseError, Parser, Stream};
 use combine_language::{expression_parser, Assoc, Fixity, Identifier, LanguageDef, LanguageEnv};
 
 #[derive(Debug, PartialEq)]
@@ -201,6 +201,41 @@ parser! {
         })
       )
     )
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EnvPair(String, Value);
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Env(Vec<EnvPair>);
+
+parser! {
+  pub fn env_pair_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> EnvPair
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (
+      expr_env.identifier().skip(spaces()).skip(token('=')).skip(spaces()),
+      value_parser(calc_expr_env())
+    ).map(|(s, v)| EnvPair(s, v))
+  }
+}
+
+parser! {
+  pub fn env_parser[I]()(I) -> Env
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    sep_by(env_pair_parser(calc_expr_env()), (spaces(), token(','), spaces())).map(Env)
   }
 }
 

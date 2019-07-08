@@ -1,5 +1,6 @@
 pub mod expr;
 pub mod evalml1;
+pub mod evalml2;
 
 #[macro_use]
 extern crate combine;
