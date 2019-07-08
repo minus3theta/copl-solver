@@ -1,5 +1,5 @@
 use combine::parser::char::{alpha_num, letter, string};
-use combine::{parser, satisfy, ParseError, Parser, Stream};
+use combine::{char::spaces, optional, parser, satisfy, token, ParseError, Parser, Stream};
 use combine_language::{expression_parser, Assoc, Fixity, Identifier, LanguageDef, LanguageEnv};
 
 #[derive(Debug, PartialEq)]
@@ -108,7 +108,12 @@ parser! {
       if_parser(calc_expr_env()),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
-      expr_env.integer().map(|x| Expr::Int(x)),
+      (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Expr::Int(
+        match neg {
+          None => x,
+          Some(_) => -x,
+        })
+      ),
       expr_env.identifier().map(|x| Expr::Ident(x)),
       expr_env.parens(expr_parser(calc_expr_env()))
     )
@@ -189,7 +194,12 @@ parser! {
     choice!(
       expr_env.reserved("true").map(|_| Value::VBool(true)),
       expr_env.reserved("false").map(|_| Value::VBool(false)),
-      expr_env.integer().map(Value::VInt)
+      (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Value::VInt(
+        match neg {
+          None => x,
+          Some(_) => -x,
+        })
+      )
     )
   }
 }
@@ -252,6 +262,14 @@ mod test {
     )
   }
   #[test]
+  fn parse_negative_int() {
+    let s = "-42";
+    assert_eq!(
+      expr_parser(calc_expr_env()).easy_parse(s),
+      Ok((Int(-42), ""))
+    )
+  }
+  #[test]
   fn parse_if1() {
     let s = "if 1 < 2 then 1 + 2 else 3 * 4";
     assert_eq!(
@@ -306,6 +324,14 @@ mod test {
     assert_eq!(
       value_parser(calc_expr_env()).easy_parse(s),
       Ok((Value::VInt(42), ""))
+    )
+  }
+  #[test]
+  fn parse_value_negative_int() {
+    let s = "-42";
+    assert_eq!(
+      value_parser(calc_expr_env()).easy_parse(s),
+      Ok((Value::VInt(-42), ""))
     )
   }
 }
