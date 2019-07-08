@@ -262,8 +262,8 @@ mod test {
       Ok((
         judgement(
           Env(vec![
-            EnvPair("x".to_owned(), VInt(3)),
-            EnvPair("y".to_owned(), VInt(2))
+            env_pair("x".to_owned(), VInt(3)),
+            env_pair("y".to_owned(), VInt(2))
           ]),
           Ident("x".to_owned()),
           VInt(3)

@@ -205,7 +205,14 @@ parser! {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct EnvPair(pub String, pub Value);
+pub struct EnvPair {
+  pub ident: String,
+  pub value: Value,
+}
+
+pub fn env_pair(ident: String, value: Value) -> EnvPair {
+  EnvPair { ident, value }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Env(pub Vec<EnvPair>);
@@ -222,7 +229,7 @@ parser! {
     (
       expr_env.identifier().skip(spaces()).skip(token('=')).skip(spaces()),
       value_parser(calc_expr_env())
-    ).map(|(s, v)| EnvPair(s, v))
+    ).map(|(s, v)| env_pair(s, v))
   }
 }
 
