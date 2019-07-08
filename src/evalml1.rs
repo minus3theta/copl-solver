@@ -180,7 +180,7 @@ pub fn prove<'a>(expr: &'a Expr) -> EProof<'a> {
         _ => panic!("Type error")
       }
     }
-    _ => unimplemented!(),
+    _ => panic!("Unsupported expression"),
   }
 }
 
