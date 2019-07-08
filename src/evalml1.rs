@@ -107,7 +107,7 @@ impl BProof {
       BProof(v, BPlus(l, r)) => print_binop(f, "plus", "B-Plus", l, r, v),
       BProof(v, BMinus(l, r)) => print_binop(f, "minus", "B-Minus", l, r, v),
       BProof(v, BTimes(l, r)) => print_binop(f, "times", "B-Times", l, r, v),
-      BProof(v, BLt(l, r)) => print_binop(f, "lt", "B-Lt", l, r, v),
+      BProof(v, BLt(l, r)) => print_binop(f, "less than", "B-Lt", l, r, v),
     }
   }
 }
@@ -162,6 +162,24 @@ pub fn prove<'a>(expr: &'a Expr) -> EProof<'a> {
     Minus(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_minus, EMinus),
     Times(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_times, ETimes),
     Lt(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_lt, ELt),
+    If(p, t, f) => {
+      let pp = prove(p.as_ref());
+      match pp.1 {
+        VBool(true) => {
+          let pt = prove(t.as_ref());
+          EProof(expr, pt.1.clone(), EIfT(
+            Box::new(pp), Box::new(pt)
+          ))
+        }
+        VBool(false) => {
+          let pf = prove(f.as_ref());
+          EProof(expr, pf.1.clone(), EIfF(
+            Box::new(pp), Box::new(pf)
+          ))
+        }
+        _ => panic!("Type error")
+      }
+    }
     _ => unimplemented!(),
   }
 }
@@ -193,6 +211,32 @@ impl<'a> EProof<'a> {
       EProof(_, _, EMinus(l, r, b)) => print_binop(f, "E-Minus", l.as_ref(), r.as_ref(), b),
       EProof(_, _, ETimes(l, r, b)) => print_binop(f, "E-Times", l.as_ref(), r.as_ref(), b),
       EProof(_, _, ELt(l, r, b)) => print_binop(f, "E-Lt", l.as_ref(), r.as_ref(), b),
+      EProof(_, _, EIfT(pp, pt)) => {
+        write!(
+          f,
+          "{}{} evalto {} by E-IfT {{\n",
+          " ".repeat(offset),
+          self.0,
+          self.1,
+        )?;
+        pp.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        pt.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      EProof(_, _, EIfF(pp, pf)) => {
+        write!(
+          f,
+          "{}{} evalto {} by E-IfF {{\n",
+          " ".repeat(offset),
+          self.0,
+          self.1,
+        )?;
+        pp.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        pf.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
       _ => unimplemented!(),
     }
   }
