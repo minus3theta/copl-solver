@@ -237,7 +237,6 @@ impl<'a> EProof<'a> {
         pf.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
-      _ => unimplemented!(),
     }
   }
 }
