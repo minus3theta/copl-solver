@@ -205,10 +205,10 @@ parser! {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct EnvPair(String, Value);
+pub struct EnvPair(pub String, pub Value);
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Env(Vec<EnvPair>);
+pub struct Env(pub Vec<EnvPair>);
 
 parser! {
   pub fn env_pair_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> EnvPair

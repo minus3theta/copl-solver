@@ -5,6 +5,7 @@ use std::fmt;
 
 #[derive(Debug, PartialEq)]
 pub struct Judgement {
+  pub env: Env,
   pub expr: Expr,
   pub value: Value,
 }
@@ -19,20 +20,25 @@ parser! {
   ]
   {
     (
+      env_parser().skip((
+        spaces(),
+        tokens(|l, r| l == r, "|-".into(), "|-".chars()),
+        spaces(),
+      )),
       expr_parser(calc_expr_env()).skip((
         spaces(),
         tokens(|l, r| l == r, "evalto".into(), "evalto".chars()),
         spaces()
       )),
       value_parser(calc_expr_env())
-    ).map(|(e, v)| {
-      Judgement { expr: e, value: v }
+    ).map(|(env, e, v)| {
+      Judgement { env, expr: e, value: v }
     })
   }
 }
 
-pub fn judgement(expr: Expr, value: Value) -> Judgement {
-  Judgement { expr, value }
+pub fn judgement(env: Env, expr: Expr, value: Value) -> Judgement {
+  Judgement { env, expr, value }
 }
 
 #[derive(Debug, PartialEq)]
@@ -253,7 +259,17 @@ mod test {
     let s = "x = 3, y = 2 |- x evalto 3";
     assert_eq!(
       judgement_parser().easy_parse(s),
-      Ok((judgement(plus(Int(1), Int(2)), VInt(3)), ""))
+      Ok((
+        judgement(
+          Env(vec![
+            EnvPair("x".to_owned(), VInt(3)),
+            EnvPair("y".to_owned(), VInt(2))
+          ]),
+          Ident("x".to_owned()),
+          VInt(3)
+        ),
+        ""
+      ))
     )
   }
 }
