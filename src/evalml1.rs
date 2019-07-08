@@ -46,7 +46,7 @@ pub enum BProofKind {
 #[derive(Debug, PartialEq)]
 pub struct BProof(Value, BProofKind);
 
-fn b_plus<'a>(l: &'a Value, r: &'a Value) -> BProof {
+fn b_plus(l: &Value, r: &Value) -> BProof {
   use self::Value::VInt;
   if let (VInt(l), VInt(r)) = (l, r) {
     BProof(VInt(l + r), BProofKind::BPlus(VInt(*l), VInt(*r)))
@@ -55,19 +55,59 @@ fn b_plus<'a>(l: &'a Value, r: &'a Value) -> BProof {
   }
 }
 
+fn b_minus(l: &Value, r: &Value) -> BProof {
+  use self::Value::VInt;
+  if let (VInt(l), VInt(r)) = (l, r) {
+    BProof(VInt(l - r), BProofKind::BMinus(VInt(*l), VInt(*r)))
+  } else {
+    panic!("Type error")
+  }
+}
+
+fn b_times(l: &Value, r: &Value) -> BProof {
+  use self::Value::VInt;
+  if let (VInt(l), VInt(r)) = (l, r) {
+    BProof(VInt(l * r), BProofKind::BTimes(VInt(*l), VInt(*r)))
+  } else {
+    panic!("Type error")
+  }
+}
+
+fn b_lt(l: &Value, r: &Value) -> BProof {
+  use self::Value::{VBool, VInt};
+  if let (VInt(l), VInt(r)) = (l, r) {
+    BProof(VBool(l < r), BProofKind::BLt(VInt(*l), VInt(*r)))
+  } else {
+    panic!("Type error")
+  }
+}
+
 impl BProof {
   fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
     use self::BProofKind::*;
-    match self {
-      BProof(v, BPlus(l, r)) => write!(
+    let print_binop = |f: &mut fmt::Formatter,
+                       op: &str,
+                       rule: &str,
+                       l: &Value,
+                       r: &Value,
+                       v: &Value|
+     -> fmt::Result {
+      write!(
         f,
-        "{}{} plus {} is {} by B-Plus {{}}",
+        "{}{} {} {} is {} by {} {{}}",
         " ".repeat(offset),
         l,
+        op,
         r,
-        v
-      ),
-      _ => unimplemented!(),
+        v,
+        rule
+      )
+    };
+    match self {
+      BProof(v, BPlus(l, r)) => print_binop(f, "plus", "B-Plus", l, r, v),
+      BProof(v, BMinus(l, r)) => print_binop(f, "minus", "B-Minus", l, r, v),
+      BProof(v, BTimes(l, r)) => print_binop(f, "times", "B-Times", l, r, v),
+      BProof(v, BLt(l, r)) => print_binop(f, "lt", "B-Lt", l, r, v),
     }
   }
 }
@@ -93,6 +133,23 @@ pub enum EProofKind<'a> {
 #[derive(Debug, PartialEq)]
 pub struct EProof<'a>(&'a Expr, Value, EProofKind<'a>);
 
+fn prove_binop<'a, 'l, 'r>(
+  expr: &'a Expr,
+  l: &'l Expr,
+  r: &'r Expr,
+  b_prover: impl Fn(&Value, &Value) -> BProof,
+  constructor: impl Fn(Box<EProof<'l>>, Box<EProof<'r>>, Box<BProof>) -> EProofKind<'a>,
+) -> EProof<'a> {
+  let pl = prove(l);
+  let pr = prove(r);
+  let pb = b_prover(&pl.1, &pr.1);
+  EProof(
+    expr,
+    pb.0.clone(),
+    constructor(Box::new(pl), Box::new(pr), Box::new(pb)),
+  )
+}
+
 pub fn prove<'a>(expr: &'a Expr) -> EProof<'a> {
   use self::EProofKind::*;
   use self::Expr::*;
@@ -101,16 +158,10 @@ pub fn prove<'a>(expr: &'a Expr) -> EProof<'a> {
   match expr {
     Int(i) => EProof(expr, VInt(*i), EInt),
     Bool(b) => EProof(expr, VBool(*b), EBool),
-    Plus(l, r) => {
-      let pl = prove(l.as_ref());
-      let pr = prove(r.as_ref());
-      let pb = b_plus(&pl.1, &pr.1);
-      EProof(
-        expr,
-        pb.0.clone(),
-        EPlus(Box::new(pl), Box::new(pr), Box::new(pb)),
-      )
-    }
+    Plus(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_plus, EPlus),
+    Minus(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_minus, EMinus),
+    Times(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_times, ETimes),
+    Lt(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_lt, ELt),
     _ => unimplemented!(),
   }
 }
