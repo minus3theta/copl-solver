@@ -157,54 +157,72 @@ pub enum EProofKind<'a> {
 
 #[derive(Debug, PartialEq)]
 pub struct EProof<'a> {
+  env: Env,
   expr: &'a Expr,
   value: Value,
   kind: EProofKind<'a>,
 }
 
-fn e_proof<'a>(expr: &'a Expr, value: Value, kind: EProofKind<'a>) -> EProof<'a> {
-  EProof { expr, value, kind }
+fn e_proof<'a>(env: Env, expr: &'a Expr, value: Value, kind: EProofKind<'a>) -> EProof<'a> {
+  EProof {
+    env,
+    expr,
+    value,
+    kind,
+  }
 }
 
 fn prove_binop<'a, 'l, 'r>(
+  env: Env,
   expr: &'a Expr,
   l: &'l Expr,
   r: &'r Expr,
   b_prover: impl Fn(&Value, &Value) -> BProof,
   constructor: impl Fn(Box<EProof<'l>>, Box<EProof<'r>>, Box<BProof>) -> EProofKind<'a>,
 ) -> EProof<'a> {
-  let pl = prove(l);
-  let pr = prove(r);
+  let pl = prove(env.clone(), l);
+  let pr = prove(env.clone(), r);
   let pb = b_prover(&pl.value, &pr.value);
-  EProof {
+  e_proof(
+    env,
     expr,
-    value: pb.value.clone(),
-    kind: constructor(Box::new(pl), Box::new(pr), Box::new(pb)),
-  }
+    pb.value.clone(),
+    constructor(Box::new(pl), Box::new(pr), Box::new(pb)),
+  )
 }
 
-pub fn prove<'a>(expr: &'a Expr) -> EProof<'a> {
+pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
   use self::EProofKind::*;
   use self::Expr::*;
   use self::Value::*;
 
   match expr {
-    Int(i) => e_proof(expr, VInt(*i), EInt),
-    Bool(b) => e_proof(expr, VBool(*b), EBool),
-    Plus(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_plus, EPlus),
-    Minus(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_minus, EMinus),
-    Times(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_times, ETimes),
-    Lt(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_lt, ELt),
+    Int(i) => e_proof(env, expr, VInt(*i), EInt),
+    Bool(b) => e_proof(env, expr, VBool(*b), EBool),
+    Plus(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_plus, EPlus),
+    Minus(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_minus, EMinus),
+    Times(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_times, ETimes),
+    Lt(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_lt, ELt),
     If(p, t, f) => {
-      let pp = prove(p.as_ref());
+      let pp = prove(env.clone(), p.as_ref());
       match pp.value {
         VBool(true) => {
-          let pt = prove(t.as_ref());
-          e_proof(expr, pt.value.clone(), EIfT(Box::new(pp), Box::new(pt)))
+          let pt = prove(env.clone(), t.as_ref());
+          e_proof(
+            env,
+            expr,
+            pt.value.clone(),
+            EIfT(Box::new(pp), Box::new(pt)),
+          )
         }
         VBool(false) => {
-          let pf = prove(f.as_ref());
-          e_proof(expr, pf.value.clone(), EIfF(Box::new(pp), Box::new(pf)))
+          let pf = prove(env.clone(), f.as_ref());
+          e_proof(
+            env,
+            expr,
+            pf.value.clone(),
+            EIfF(Box::new(pp), Box::new(pf)),
+          )
         }
         _ => panic!("Type error"),
       }
@@ -220,8 +238,9 @@ impl<'a> EProof<'a> {
       |f: &mut fmt::Formatter, rule: &str, l: &EProof, r: &EProof, b: &BProof| -> fmt::Result {
         write!(
           f,
-          "{}{} evalto {} by {} {{\n",
+          "{}{} |- {} evalto {} by {} {{\n",
           " ".repeat(offset),
+          self.env,
           self.expr,
           self.value,
           rule
@@ -233,51 +252,33 @@ impl<'a> EProof<'a> {
         b.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       };
-    match self {
-      EProof {
-        expr,
-        value,
-        kind: EInt,
-      } => write!(
+    match &self.kind {
+      EInt => write!(
         f,
-        "{}{} evalto {} by E-Int {{}}",
+        "{}{} |- {} evalto {} by E-Int {{}}",
         " ".repeat(offset),
-        expr,
-        value
+        self.env,
+        self.expr,
+        self.value
       ),
-      EProof {
-        expr,
-        value,
-        kind: EBool,
-      } => write!(
+      EBool => write!(
         f,
-        "{}{} evalto {} by E-Bool {{}}",
+        "{}{} |- {} evalto {} by E-Bool {{}}",
         " ".repeat(offset),
-        expr,
-        value
+        self.env,
+        self.expr,
+        self.value
       ),
-      EProof {
-        kind: EPlus(l, r, b),
-        ..
-      } => print_binop(f, "E-Plus", l.as_ref(), r.as_ref(), b),
-      EProof {
-        kind: EMinus(l, r, b),
-        ..
-      } => print_binop(f, "E-Minus", l.as_ref(), r.as_ref(), b),
-      EProof {
-        kind: ETimes(l, r, b),
-        ..
-      } => print_binop(f, "E-Times", l.as_ref(), r.as_ref(), b),
-      EProof {
-        kind: ELt(l, r, b), ..
-      } => print_binop(f, "E-Lt", l.as_ref(), r.as_ref(), b),
-      EProof {
-        kind: EIfT(pp, pt), ..
-      } => {
+      EPlus(l, r, b) => print_binop(f, "E-Plus", l.as_ref(), r.as_ref(), b.as_ref()),
+      EMinus(l, r, b) => print_binop(f, "E-Minus", l.as_ref(), r.as_ref(), b.as_ref()),
+      ETimes(l, r, b) => print_binop(f, "E-Times", l.as_ref(), r.as_ref(), b.as_ref()),
+      ELt(l, r, b) => print_binop(f, "E-Lt", l.as_ref(), r.as_ref(), b.as_ref()),
+      EIfT(pp, pt) => {
         write!(
           f,
-          "{}{} evalto {} by E-IfT {{\n",
+          "{}{} |- {} evalto {} by E-IfT {{\n",
           " ".repeat(offset),
+          self.env,
           self.expr,
           self.value,
         )?;
@@ -286,13 +287,12 @@ impl<'a> EProof<'a> {
         pt.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
-      EProof {
-        kind: EIfF(pp, pf), ..
-      } => {
+      EIfF(pp, pf) => {
         write!(
           f,
-          "{}{} evalto {} by E-IfF {{\n",
+          "{}{} |- {} evalto {} by E-IfF {{\n",
           " ".repeat(offset),
+          self.env,
           self.expr,
           self.value,
         )?;

@@ -283,6 +283,12 @@ impl fmt::Display for Value {
   }
 }
 
+impl fmt::Display for Env {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    unimplemented!()
+  }
+}
+
 #[cfg(test)]
 mod test {
   use super::Expr::*;
