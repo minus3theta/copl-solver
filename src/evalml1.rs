@@ -44,12 +44,19 @@ pub enum BProofKind {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct BProof(Value, BProofKind);
+pub struct BProof {
+  value: Value,
+  kind: BProofKind,
+}
+
+fn b_proof(value: Value, kind: BProofKind) -> BProof {
+  BProof { value, kind }
+}
 
 fn b_plus(l: &Value, r: &Value) -> BProof {
   use self::Value::VInt;
   if let (VInt(l), VInt(r)) = (l, r) {
-    BProof(VInt(l + r), BProofKind::BPlus(VInt(*l), VInt(*r)))
+    b_proof(VInt(l + r), BProofKind::BPlus(VInt(*l), VInt(*r)))
   } else {
     panic!("Type error")
   }
@@ -58,7 +65,7 @@ fn b_plus(l: &Value, r: &Value) -> BProof {
 fn b_minus(l: &Value, r: &Value) -> BProof {
   use self::Value::VInt;
   if let (VInt(l), VInt(r)) = (l, r) {
-    BProof(VInt(l - r), BProofKind::BMinus(VInt(*l), VInt(*r)))
+    b_proof(VInt(l - r), BProofKind::BMinus(VInt(*l), VInt(*r)))
   } else {
     panic!("Type error")
   }
@@ -67,7 +74,7 @@ fn b_minus(l: &Value, r: &Value) -> BProof {
 fn b_times(l: &Value, r: &Value) -> BProof {
   use self::Value::VInt;
   if let (VInt(l), VInt(r)) = (l, r) {
-    BProof(VInt(l * r), BProofKind::BTimes(VInt(*l), VInt(*r)))
+    b_proof(VInt(l * r), BProofKind::BTimes(VInt(*l), VInt(*r)))
   } else {
     panic!("Type error")
   }
@@ -76,7 +83,7 @@ fn b_times(l: &Value, r: &Value) -> BProof {
 fn b_lt(l: &Value, r: &Value) -> BProof {
   use self::Value::{VBool, VInt};
   if let (VInt(l), VInt(r)) = (l, r) {
-    BProof(VBool(l < r), BProofKind::BLt(VInt(*l), VInt(*r)))
+    b_proof(VBool(l < r), BProofKind::BLt(VInt(*l), VInt(*r)))
   } else {
     panic!("Type error")
   }
@@ -104,10 +111,22 @@ impl BProof {
       )
     };
     match self {
-      BProof(v, BPlus(l, r)) => print_binop(f, "plus", "B-Plus", l, r, v),
-      BProof(v, BMinus(l, r)) => print_binop(f, "minus", "B-Minus", l, r, v),
-      BProof(v, BTimes(l, r)) => print_binop(f, "times", "B-Times", l, r, v),
-      BProof(v, BLt(l, r)) => print_binop(f, "less than", "B-Lt", l, r, v),
+      BProof {
+        value,
+        kind: BPlus(l, r),
+      } => print_binop(f, "plus", "B-Plus", l, r, value),
+      BProof {
+        value,
+        kind: BMinus(l, r),
+      } => print_binop(f, "minus", "B-Minus", l, r, value),
+      BProof {
+        value,
+        kind: BTimes(l, r),
+      } => print_binop(f, "times", "B-Times", l, r, value),
+      BProof {
+        value,
+        kind: BLt(l, r),
+      } => print_binop(f, "less than", "B-Lt", l, r, value),
     }
   }
 }
@@ -131,7 +150,15 @@ pub enum EProofKind<'a> {
 }
 
 #[derive(Debug, PartialEq)]
-pub struct EProof<'a>(&'a Expr, Value, EProofKind<'a>);
+pub struct EProof<'a> {
+  expr: &'a Expr,
+  value: Value,
+  kind: EProofKind<'a>,
+}
+
+fn e_proof<'a>(expr: &'a Expr, value: Value, kind: EProofKind<'a>) -> EProof<'a> {
+  EProof { expr, value, kind }
+}
 
 fn prove_binop<'a, 'l, 'r>(
   expr: &'a Expr,
@@ -142,12 +169,12 @@ fn prove_binop<'a, 'l, 'r>(
 ) -> EProof<'a> {
   let pl = prove(l);
   let pr = prove(r);
-  let pb = b_prover(&pl.1, &pr.1);
-  EProof(
+  let pb = b_prover(&pl.value, &pr.value);
+  EProof {
     expr,
-    pb.0.clone(),
-    constructor(Box::new(pl), Box::new(pr), Box::new(pb)),
-  )
+    value: pb.value.clone(),
+    kind: constructor(Box::new(pl), Box::new(pr), Box::new(pb)),
+  }
 }
 
 pub fn prove<'a>(expr: &'a Expr) -> EProof<'a> {
@@ -156,28 +183,24 @@ pub fn prove<'a>(expr: &'a Expr) -> EProof<'a> {
   use self::Value::*;
 
   match expr {
-    Int(i) => EProof(expr, VInt(*i), EInt),
-    Bool(b) => EProof(expr, VBool(*b), EBool),
+    Int(i) => e_proof(expr, VInt(*i), EInt),
+    Bool(b) => e_proof(expr, VBool(*b), EBool),
     Plus(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_plus, EPlus),
     Minus(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_minus, EMinus),
     Times(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_times, ETimes),
     Lt(l, r) => prove_binop(expr, l.as_ref(), r.as_ref(), b_lt, ELt),
     If(p, t, f) => {
       let pp = prove(p.as_ref());
-      match pp.1 {
+      match pp.value {
         VBool(true) => {
           let pt = prove(t.as_ref());
-          EProof(expr, pt.1.clone(), EIfT(
-            Box::new(pp), Box::new(pt)
-          ))
+          e_proof(expr, pt.value.clone(), EIfT(Box::new(pp), Box::new(pt)))
         }
         VBool(false) => {
           let pf = prove(f.as_ref());
-          EProof(expr, pf.1.clone(), EIfF(
-            Box::new(pp), Box::new(pf)
-          ))
+          e_proof(expr, pf.value.clone(), EIfF(Box::new(pp), Box::new(pf)))
         }
-        _ => panic!("Type error")
+        _ => panic!("Type error"),
       }
     }
     _ => panic!("Unsupported expression"),
@@ -193,8 +216,8 @@ impl<'a> EProof<'a> {
           f,
           "{}{} evalto {} by {} {{\n",
           " ".repeat(offset),
-          self.0,
-          self.1,
+          self.expr,
+          self.value,
           rule
         )?;
         l.print(f, offset + 2)?;
@@ -205,32 +228,67 @@ impl<'a> EProof<'a> {
         write!(f, "\n{}}}", " ".repeat(offset))
       };
     match self {
-      EProof(e, v, EInt) => write!(f, "{}{} evalto {} by E-Int {{}}", " ".repeat(offset), e, v),
-      EProof(e, v, EBool) => write!(f, "{}{} evalto {} by E-Bool {{}}", " ".repeat(offset), e, v),
-      EProof(_, _, EPlus(l, r, b)) => print_binop(f, "E-Plus", l.as_ref(), r.as_ref(), b),
-      EProof(_, _, EMinus(l, r, b)) => print_binop(f, "E-Minus", l.as_ref(), r.as_ref(), b),
-      EProof(_, _, ETimes(l, r, b)) => print_binop(f, "E-Times", l.as_ref(), r.as_ref(), b),
-      EProof(_, _, ELt(l, r, b)) => print_binop(f, "E-Lt", l.as_ref(), r.as_ref(), b),
-      EProof(_, _, EIfT(pp, pt)) => {
+      EProof {
+        expr,
+        value,
+        kind: EInt,
+      } => write!(
+        f,
+        "{}{} evalto {} by E-Int {{}}",
+        " ".repeat(offset),
+        expr,
+        value
+      ),
+      EProof {
+        expr,
+        value,
+        kind: EBool,
+      } => write!(
+        f,
+        "{}{} evalto {} by E-Bool {{}}",
+        " ".repeat(offset),
+        expr,
+        value
+      ),
+      EProof {
+        kind: EPlus(l, r, b),
+        ..
+      } => print_binop(f, "E-Plus", l.as_ref(), r.as_ref(), b),
+      EProof {
+        kind: EMinus(l, r, b),
+        ..
+      } => print_binop(f, "E-Minus", l.as_ref(), r.as_ref(), b),
+      EProof {
+        kind: ETimes(l, r, b),
+        ..
+      } => print_binop(f, "E-Times", l.as_ref(), r.as_ref(), b),
+      EProof {
+        kind: ELt(l, r, b), ..
+      } => print_binop(f, "E-Lt", l.as_ref(), r.as_ref(), b),
+      EProof {
+        kind: EIfT(pp, pt), ..
+      } => {
         write!(
           f,
           "{}{} evalto {} by E-IfT {{\n",
           " ".repeat(offset),
-          self.0,
-          self.1,
+          self.expr,
+          self.value,
         )?;
         pp.print(f, offset + 2)?;
         write!(f, ";\n")?;
         pt.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
-      EProof(_, _, EIfF(pp, pf)) => {
+      EProof {
+        kind: EIfF(pp, pf), ..
+      } => {
         write!(
           f,
           "{}{} evalto {} by E-IfF {{\n",
           " ".repeat(offset),
-          self.0,
-          self.1,
+          self.expr,
+          self.value,
         )?;
         pp.print(f, offset + 2)?;
         write!(f, ";\n")?;
@@ -264,20 +322,20 @@ mod test {
   }
   #[test]
   fn prove_bool() {
-    assert_eq!(prove(&Bool(true)), EProof(&Bool(true), VBool(true), EBool))
+    assert_eq!(prove(&Bool(true)), e_proof(&Bool(true), VBool(true), EBool))
   }
   #[test]
   fn prove_plus() {
     let e = plus(Int(3), Int(5));
     assert_eq!(
       prove(&e),
-      EProof(
+      e_proof(
         &e,
         VInt(8),
         EPlus(
-          Box::new(EProof(&Int(3), VInt(3), EInt)),
-          Box::new(EProof(&Int(5), VInt(5), EInt)),
-          Box::new(BProof(VInt(8), BPlus(VInt(3), VInt(5))))
+          Box::new(e_proof(&Int(3), VInt(3), EInt)),
+          Box::new(e_proof(&Int(5), VInt(5), EInt)),
+          Box::new(b_proof(VInt(8), BPlus(VInt(3), VInt(5))))
         )
       )
     )
