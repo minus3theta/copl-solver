@@ -309,7 +309,7 @@ impl fmt::Display for Env {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let env = &self.0;
     for (i, EnvPair { ident, value }) in env.iter().enumerate() {
-      write!(f, "{}={}", ident, value)?;
+      write!(f, "{} = {}", ident, value)?;
       if i < env.len() - 1 {
         write!(f, ", ")?;
       } else {
