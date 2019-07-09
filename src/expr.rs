@@ -198,6 +198,10 @@ pub fn let_in(var: String, def: Expr, body: Expr) -> Expr {
   Expr::Let(var, Box::new(def), Box::new(body))
 }
 
+pub fn app(f: Expr, x: Expr) -> Expr {
+  Expr::App(Box::new(f), Box::new(x))
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
   VBool(bool),
@@ -450,6 +454,14 @@ mod test {
         },
         ""
       ))
+    )
+  }
+  #[test]
+  fn parse_apply() {
+    let s = "f 1 2";
+    assert_eq!(
+      expr_parser(calc_expr_env()).easy_parse(s),
+      Ok((app(app(Ident("f".to_owned()), Int(1)), Int(2)), ""))
     )
   }
 }
