@@ -153,6 +153,8 @@ pub enum EProofKind<'a> {
   EMinus(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
   ETimes(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
   ELt(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
+  EVar1,
+  EVar2(Box<EProof<'a>>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -227,6 +229,23 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
         _ => panic!("Type error"),
       }
     }
+    Ident(x) => {
+      if env.0.is_empty() {
+        panic!("Undefined variable")
+      }
+      let EnvPair { ident, value } = env.0.last().unwrap().clone();
+      if *x == ident {
+        e_proof(env, expr, value, EVar1)
+      } else {
+        let mut next_env = env.clone();
+        next_env.0.pop();
+        let p = prove(next_env, expr);
+        e_proof(env, expr, p.value.clone(), EVar2(Box::new(p)))
+      }
+    }
+    Let(_, _, _) => {
+      unimplemented!()
+    }
     _ => panic!("Unsupported expression"),
   }
 }
@@ -299,6 +318,26 @@ impl<'a> EProof<'a> {
         pp.print(f, offset + 2)?;
         write!(f, ";\n")?;
         pf.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      EVar1 => write!(
+        f,
+        "{}{}|- {} evalto {} by E-Var1 {{}}",
+        " ".repeat(offset),
+        self.env,
+        self.expr,
+        self.value
+      ),
+      EVar2(p) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-Var2 {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        p.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
     }
