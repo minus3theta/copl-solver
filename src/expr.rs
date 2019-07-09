@@ -96,6 +96,23 @@ parser! {
 }
 
 parser! {
+  fn let_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Expr
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (
+      expr_env.reserved("let").with(expr_env.identifier()),
+      (spaces(), token('='), spaces()).with(expr_parser(calc_expr_env())),
+      expr_env.reserved("in").with(expr_parser(calc_expr_env()))
+    ).map(|(ident, def, body)| let_in(ident, def, body))
+  }
+}
+
+parser! {
   fn term_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Expr
   where [
     I: Stream<Item = char>,
@@ -106,6 +123,7 @@ parser! {
   {
     choice!(
       if_parser(calc_expr_env()),
+      let_parser(calc_expr_env()),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Expr::Int(
@@ -172,6 +190,10 @@ pub fn cons(l: Expr, r: Expr) -> Expr {
 
 pub fn ite(p: Expr, t: Expr, f: Expr) -> Expr {
   Expr::If(Box::new(p), Box::new(t), Box::new(f))
+}
+
+pub fn let_in(ident: String, def: Expr, body: Expr) -> Expr {
+  Expr::Let(ident, Box::new(def), Box::new(body))
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -285,7 +307,16 @@ impl fmt::Display for Value {
 
 impl fmt::Display for Env {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    unimplemented!()
+    let env = &self.0;
+    for (i, EnvPair { ident, value }) in env.iter().enumerate() {
+      write!(f, "{}={}", ident, value)?;
+      if i < env.len() - 1 {
+        write!(f, ", ")?;
+      } else {
+        write!(f, " ")?;
+      }
+    }
+    Ok(())
   }
 }
 
@@ -380,6 +411,17 @@ mod test {
     assert_eq!(
       value_parser(calc_expr_env()).easy_parse(s),
       Ok((Value::VInt(-42), ""))
+    )
+  }
+  #[test]
+  fn parse_let1() {
+    let s = "let x = 1 in x + 2";
+    assert_eq!(
+      expr_parser(calc_expr_env()).easy_parse(s),
+      Ok((
+        let_in("x".to_owned(), Int(1), plus(Ident("x".to_owned()), Int(2))),
+        ""
+      ))
     )
   }
 }

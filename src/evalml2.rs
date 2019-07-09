@@ -238,7 +238,7 @@ impl<'a> EProof<'a> {
       |f: &mut fmt::Formatter, rule: &str, l: &EProof, r: &EProof, b: &BProof| -> fmt::Result {
         write!(
           f,
-          "{}{} |- {} evalto {} by {} {{\n",
+          "{}{}|- {} evalto {} by {} {{\n",
           " ".repeat(offset),
           self.env,
           self.expr,
@@ -255,7 +255,7 @@ impl<'a> EProof<'a> {
     match &self.kind {
       EInt => write!(
         f,
-        "{}{} |- {} evalto {} by E-Int {{}}",
+        "{}{}|- {} evalto {} by E-Int {{}}",
         " ".repeat(offset),
         self.env,
         self.expr,
@@ -263,7 +263,7 @@ impl<'a> EProof<'a> {
       ),
       EBool => write!(
         f,
-        "{}{} |- {} evalto {} by E-Bool {{}}",
+        "{}{}|- {} evalto {} by E-Bool {{}}",
         " ".repeat(offset),
         self.env,
         self.expr,
@@ -276,7 +276,7 @@ impl<'a> EProof<'a> {
       EIfT(pp, pt) => {
         write!(
           f,
-          "{}{} |- {} evalto {} by E-IfT {{\n",
+          "{}{}|- {} evalto {} by E-IfT {{\n",
           " ".repeat(offset),
           self.env,
           self.expr,
@@ -290,7 +290,7 @@ impl<'a> EProof<'a> {
       EIfF(pp, pf) => {
         write!(
           f,
-          "{}{} |- {} evalto {} by E-IfF {{\n",
+          "{}{}|- {} evalto {} by E-IfF {{\n",
           " ".repeat(offset),
           self.env,
           self.expr,
@@ -332,6 +332,14 @@ mod test {
         ),
         ""
       ))
+    )
+  }
+  #[test]
+  fn parse_judgement2() {
+    let s = "|- 1 + 2 evalto 3";
+    assert_eq!(
+      judgement_parser().easy_parse(s),
+      Ok((judgement(Env(vec![]), plus(Int(1), Int(2)), VInt(3)), ""))
     )
   }
 }
