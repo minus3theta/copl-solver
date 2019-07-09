@@ -1,8 +1,10 @@
 use combine::parser::char::{alpha_num, letter, string};
-use combine::{char::spaces, optional, parser, satisfy, sep_by, token, ParseError, Parser, Stream};
+use combine::{
+  char::spaces, optional, parser, satisfy, sep_by, token, tokens, ParseError, Parser, Stream,
+};
 use combine_language::{expression_parser, Assoc, Fixity, Identifier, LanguageDef, LanguageEnv};
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Expr {
   Bool(bool),
   Int(i64),
@@ -21,7 +23,7 @@ pub enum Expr {
   Match(Box<Expr>, Box<Expr>, String, String, Box<Expr>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Op {
   Plus,
   Minus,
@@ -108,7 +110,7 @@ parser! {
       expr_env.reserved("let").with(expr_env.identifier()),
       (spaces(), token('='), spaces()).with(expr_parser(calc_expr_env())),
       expr_env.reserved("in").with(expr_parser(calc_expr_env()))
-    ).map(|(ident, def, body)| let_in(ident, def, body))
+    ).map(|(var, def, body)| let_in(var, def, body))
   }
 }
 
@@ -192,14 +194,15 @@ pub fn ite(p: Expr, t: Expr, f: Expr) -> Expr {
   Expr::If(Box::new(p), Box::new(t), Box::new(f))
 }
 
-pub fn let_in(ident: String, def: Expr, body: Expr) -> Expr {
-  Expr::Let(ident, Box::new(def), Box::new(body))
+pub fn let_in(var: String, def: Expr, body: Expr) -> Expr {
+  Expr::Let(var, Box::new(def), Box::new(body))
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
   VBool(bool),
   VInt(i64),
+  VClosure { env: Env, var: String, expr: Expr },
   VCons(Box<Value>, Box<Value>),
   VNil,
 }
@@ -216,6 +219,14 @@ parser! {
     choice!(
       expr_env.reserved("true").map(|_| Value::VBool(true)),
       expr_env.reserved("false").map(|_| Value::VBool(false)),
+      (
+        expr_env.parens(env_parser()),
+        expr_env.brackets((
+          (spaces(), expr_env.reserved("fun"), spaces()).with(expr_env.identifier()),
+          (spaces(), tokens(|l, r| l == r, "->".into(), "->".chars()),spaces())
+            .with(expr_parser(calc_expr_env())).skip(spaces())
+        ))
+      ).map(|(env, (var, expr))| Value::VClosure { env, var, expr }),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Value::VInt(
         match neg {
           None => x,
@@ -228,12 +239,12 @@ parser! {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EnvPair {
-  pub ident: String,
+  pub var: String,
   pub value: Value,
 }
 
-pub fn env_pair(ident: String, value: Value) -> EnvPair {
-  EnvPair { ident, value }
+pub fn env_pair(var: String, value: Value) -> EnvPair {
+  EnvPair { var, value }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -299,6 +310,7 @@ impl fmt::Display for Value {
     match self {
       VBool(b) => b.fmt(f),
       VInt(i) => i.fmt(f),
+      VClosure { env, var, expr } => write!(f, "({})[fun {} -> {}]", env, var, expr),
       VNil => write!(f, "[]"),
       VCons(_, _) => unimplemented!(),
     }
@@ -308,8 +320,8 @@ impl fmt::Display for Value {
 impl fmt::Display for Env {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let env = &self.0;
-    for (i, EnvPair { ident, value }) in env.iter().enumerate() {
-      write!(f, "{} = {}", ident, value)?;
+    for (i, EnvPair { var, value }) in env.iter().enumerate() {
+      write!(f, "{} = {}", var, value)?;
       if i < env.len() - 1 {
         write!(f, ", ")?;
       } else {
@@ -420,6 +432,22 @@ mod test {
       expr_parser(calc_expr_env()).easy_parse(s),
       Ok((
         let_in("x".to_owned(), Int(1), plus(Ident("x".to_owned()), Int(2))),
+        ""
+      ))
+    )
+  }
+  #[test]
+  fn parse_value_closure() {
+    use self::Value::*;
+    let s = "(y=2)[fun x -> x + y]";
+    assert_eq!(
+      value_parser(calc_expr_env()).easy_parse(s),
+      Ok((
+        VClosure {
+          env: Env(vec![env_pair("y".to_owned(), VInt(2))]),
+          var: "x".to_owned(),
+          expr: plus(Ident("x".to_owned()), Ident("y".to_owned()))
+        },
         ""
       ))
     )

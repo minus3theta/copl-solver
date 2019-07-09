@@ -234,8 +234,8 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
       if env.0.is_empty() {
         panic!("Undefined variable")
       }
-      let EnvPair { ident, value } = env.0.last().unwrap().clone();
-      if *x == ident {
+      let EnvPair { var, value } = env.0.last().unwrap().clone();
+      if *x == var {
         e_proof(env, expr, value, EVar1)
       } else {
         let mut next_env = env.clone();
@@ -244,11 +244,11 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
         e_proof(env, expr, p.value.clone(), EVar2(Box::new(p)))
       }
     }
-    Let(ident, def, body) => {
+    Let(var, def, body) => {
       let pdef = prove(env.clone(), def);
       let mut next_env = env.clone();
       next_env.0.push(EnvPair {
-        ident: ident.clone(),
+        var: var.clone(),
         value: pdef.value.clone(),
       });
       let pbody = prove(next_env, body);
