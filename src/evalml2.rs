@@ -155,6 +155,7 @@ pub enum EProofKind<'a> {
   ELt(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
   EVar1,
   EVar2(Box<EProof<'a>>),
+  ELet(Box<EProof<'a>>, Box<EProof<'a>>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -243,8 +244,20 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
         e_proof(env, expr, p.value.clone(), EVar2(Box::new(p)))
       }
     }
-    Let(_, _, _) => {
-      unimplemented!()
+    Let(ident, def, body) => {
+      let pdef = prove(env.clone(), def);
+      let mut next_env = env.clone();
+      next_env.0.push(EnvPair {
+        ident: ident.clone(),
+        value: pdef.value.clone(),
+      });
+      let pbody = prove(next_env, body);
+      e_proof(
+        env,
+        expr,
+        pbody.value.clone(),
+        ELet(Box::new(pdef), Box::new(pbody)),
+      )
     }
     _ => panic!("Unsupported expression"),
   }
@@ -338,6 +351,20 @@ impl<'a> EProof<'a> {
           self.value,
         )?;
         p.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      ELet(pdef, pbody) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-Let {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        pdef.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        pbody.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
     }

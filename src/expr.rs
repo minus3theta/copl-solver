@@ -282,7 +282,7 @@ impl fmt::Display for Expr {
       Times(l, r) => write!(f, "({} * {})", l, r),
       Lt(l, r) => write!(f, "({} < {})", l, r),
       If(ep, et, ef) => write!(f, "(if {} then {} else {})", ep, et, ef),
-      Let(_, _, _) => unimplemented!(),
+      Let(s, d, b) => write!(f, "(let {} = {} in {})", s, d, b),
       Fun(_, _) => unimplemented!(),
       App(_, _) => unimplemented!(),
       LetRec(_, _, _, _) => unimplemented!(),
