@@ -116,6 +116,23 @@ parser! {
 }
 
 parser! {
+  pub fn fun_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> (String, Expr)
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (
+      (spaces(), expr_env.reserved("fun"), spaces()).with(expr_env.identifier()),
+      (spaces(), tokens(|l, r| l == r, "->".into(), "->".chars()),spaces())
+        .with(expr_parser()).skip(spaces())
+    )
+  }
+}
+
+parser! {
   fn term_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Expr
   where [
     I: Stream<Item = char>,
@@ -127,6 +144,7 @@ parser! {
     choice!(
       if_parser(calc_expr_env()),
       let_parser(calc_expr_env()),
+      fun_parser(calc_expr_env()).map(|(var, body)| fun(var, body)),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Expr::Int(
@@ -192,6 +210,7 @@ parser! {
     choice!(
       if_parser(calc_expr_env()),
       let_parser(calc_expr_env()),
+      fun_parser(calc_expr_env()).map(|(var, body)| fun(var, body)),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
       expr_env.integer().map(Expr::Int),
@@ -263,6 +282,10 @@ pub fn app(f: Expr, x: Expr) -> Expr {
   Expr::App(Box::new(f), Box::new(x))
 }
 
+pub fn fun(var: String, body: Expr) -> Expr {
+  Expr::Fun(var, Box::new(body))
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Value {
   VBool(bool),
@@ -286,11 +309,7 @@ parser! {
       expr_env.reserved("false").map(|_| Value::VBool(false)),
       (
         expr_env.parens(env_parser()),
-        expr_env.brackets((
-          (spaces(), expr_env.reserved("fun"), spaces()).with(expr_env.identifier()),
-          (spaces(), tokens(|l, r| l == r, "->".into(), "->".chars()),spaces())
-            .with(expr_parser()).skip(spaces())
-        ))
+        expr_env.brackets(fun_parser(calc_expr_env()))
       ).map(|(env, (var, expr))| Value::VClosure { env, var, expr }),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Value::VInt(
         match neg {
@@ -428,18 +447,12 @@ mod test {
   #[test]
   fn parse_bool() {
     let s = "true";
-    assert_eq!(
-      expr_parser().easy_parse(s),
-      Ok((Bool(true), ""))
-    )
+    assert_eq!(expr_parser().easy_parse(s), Ok((Bool(true), "")))
   }
   #[test]
   fn parse_negative_int() {
     let s = "-42";
-    assert_eq!(
-      expr_parser().easy_parse(s),
-      Ok((Int(-42), ""))
-    )
+    assert_eq!(expr_parser().easy_parse(s), Ok((Int(-42), "")))
   }
   #[test]
   fn parse_if1() {
@@ -539,6 +552,14 @@ mod test {
     assert_eq!(
       expr_parser().easy_parse(s),
       Ok((app(app(Ident("f".to_owned()), Int(1)), Int(2)), ""))
+    )
+  }
+  #[test]
+  fn parse_fun() {
+    let s = "fun x -> x + 1";
+    assert_eq!(
+      expr_parser().easy_parse(s),
+      Ok((fun("x".to_owned(), plus(Ident("x".to_owned()), Int(1))), ""))
     )
   }
   #[test]
