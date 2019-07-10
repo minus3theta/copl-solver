@@ -25,7 +25,7 @@ parser! {
         tokens(|l, r| l == r, "|-".into(), "|-".chars()),
         spaces(),
       )),
-      expr_parser(calc_expr_env()).skip((
+      expr_parser().skip((
         spaces(),
         tokens(|l, r| l == r, "evalto".into(), "evalto".chars()),
         spaces()

@@ -1,6 +1,7 @@
 use combine::parser::char::{alpha_num, letter, string};
 use combine::{
-  char::spaces, optional, parser, satisfy, sep_by, token, tokens, ParseError, Parser, Stream,
+  attempt, char::spaces, optional, parser, satisfy, sep_by, token, tokens, ParseError, Parser,
+  Stream,
 };
 use combine_language::{expression_parser, Assoc, Fixity, Identifier, LanguageDef, LanguageEnv};
 
@@ -47,7 +48,7 @@ where
       start: letter(),
       rest: alpha_num(),
       reserved: [
-        "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
+        "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with", "evalto",
       ]
       .iter()
       .map(|x| (*x).into())
@@ -68,7 +69,7 @@ where
 }
 
 parser! {
-  pub fn expr_parser['a, I](_expr_env: LanguageEnv<'a, I>)(I) -> Expr
+  pub fn expr_parser[I]()(I) -> Expr
   where [
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -76,7 +77,7 @@ parser! {
       From<::std::num::ParseIntError>,
   ]
   {
-    expression_parser(term_parser(calc_expr_env()), op_parser(calc_expr_env()), op)
+    expression_parser(app_parser(), op_parser(calc_expr_env()), op)
   }
 }
 
@@ -90,9 +91,9 @@ parser! {
   ]
   {
     (
-      expr_env.reserved("if").with(expr_parser(calc_expr_env())),
-      expr_env.reserved("then").with(expr_parser(calc_expr_env())),
-      expr_env.reserved("else").with(expr_parser(calc_expr_env()))
+      expr_env.reserved("if").with(expr_parser()),
+      expr_env.reserved("then").with(expr_parser()),
+      expr_env.reserved("else").with(expr_parser())
     ).map(|(p, t, f)| ite(p, t, f))
   }
 }
@@ -108,8 +109,8 @@ parser! {
   {
     (
       expr_env.reserved("let").with(expr_env.identifier()),
-      (spaces(), token('='), spaces()).with(expr_parser(calc_expr_env())),
-      expr_env.reserved("in").with(expr_parser(calc_expr_env()))
+      (spaces(), token('='), spaces()).with(expr_parser()),
+      expr_env.reserved("in").with(expr_parser())
     ).map(|(var, def, body)| let_in(var, def, body))
   }
 }
@@ -134,8 +135,68 @@ parser! {
           Some(_) => -x,
         })
       ),
-      expr_env.identifier().map(|x| Expr::Ident(x)),
-      expr_env.parens(expr_parser(calc_expr_env()))
+      expr_env.identifier().map(Expr::Ident),
+      expr_env.parens(expr_parser())
+    )
+  }
+}
+
+parser! {
+  fn app_parser[I]()(I) -> Expr
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (spaces().with(term_parser(calc_expr_env())).skip(spaces()), app_rest_parser()).map(|(mut f, v)| {
+      for e in v.into_iter().rev() {
+        f = app(f, e);
+      }
+      f
+    })
+  }
+}
+
+parser! {
+  fn app_rest_parser[I]()(I) -> Vec<Expr>
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    optional((app_arg_parser(calc_expr_env()).skip(spaces()), app_rest_parser())).map(|opt| {
+      match opt {
+        Some((e, mut v)) => {
+          v.push(e);
+          v
+        }
+        None => vec![],
+      }
+    })
+  }
+}
+
+parser! {
+  fn app_arg_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Expr
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    choice!(
+      if_parser(calc_expr_env()),
+      let_parser(calc_expr_env()),
+      expr_env.reserved("true").map(|_| Expr::Bool(true)),
+      expr_env.reserved("false").map(|_| Expr::Bool(false)),
+      expr_env.integer().map(Expr::Int),
+      expr_env.parens(expr_parser()),
+      attempt(expr_env.identifier().map(Expr::Ident))
     )
   }
 }
@@ -228,7 +289,7 @@ parser! {
         expr_env.brackets((
           (spaces(), expr_env.reserved("fun"), spaces()).with(expr_env.identifier()),
           (spaces(), tokens(|l, r| l == r, "->".into(), "->".chars()),spaces())
-            .with(expr_parser(calc_expr_env())).skip(spaces())
+            .with(expr_parser()).skip(spaces())
         ))
       ).map(|(env, (var, expr))| Value::VClosure { env, var, expr }),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Value::VInt(
@@ -344,7 +405,15 @@ mod test {
   fn parse_expr1() {
     let s = "1 + 2 * 3 - 4";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
+      Ok((minus(plus(Int(1), times(Int(2), Int(3))), Int(4)), ""))
+    )
+  }
+  #[test]
+  fn parse_expr2() {
+    let s = " 1 + 2 * 3 - 4";
+    assert_eq!(
+      expr_parser().easy_parse(s),
       Ok((minus(plus(Int(1), times(Int(2), Int(3))), Int(4)), ""))
     )
   }
@@ -352,15 +421,23 @@ mod test {
   fn parse_ident() {
     let s = "foo";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
       Ok((Ident("foo".to_owned()), ""))
+    )
+  }
+  #[test]
+  fn parse_bool() {
+    let s = "true";
+    assert_eq!(
+      expr_parser().easy_parse(s),
+      Ok((Bool(true), ""))
     )
   }
   #[test]
   fn parse_negative_int() {
     let s = "-42";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
       Ok((Int(-42), ""))
     )
   }
@@ -368,7 +445,7 @@ mod test {
   fn parse_if1() {
     let s = "if 1 < 2 then 1 + 2 else 3 * 4";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
       Ok((
         ite(
           lt(Int(1), Int(2)),
@@ -383,7 +460,7 @@ mod test {
   fn parse_if2() {
     let s = "1 + if true then 1 else 3";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
       Ok((plus(Int(1), ite(Bool(true), Int(1), Int(3))), ""))
     )
   }
@@ -391,7 +468,7 @@ mod test {
   fn parse_if3() {
     let s = "1 + if 1 < 2 then 1 + 2 else 3 * 4";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
       Ok((
         plus(
           Int(1),
@@ -433,7 +510,7 @@ mod test {
   fn parse_let1() {
     let s = "let x = 1 in x + 2";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
       Ok((
         let_in("x".to_owned(), Int(1), plus(Ident("x".to_owned()), Int(2))),
         ""
@@ -460,8 +537,72 @@ mod test {
   fn parse_apply() {
     let s = "f 1 2";
     assert_eq!(
-      expr_parser(calc_expr_env()).easy_parse(s),
+      expr_parser().easy_parse(s),
       Ok((app(app(Ident("f".to_owned()), Int(1)), Int(2)), ""))
     )
+  }
+  #[test]
+  fn parse_apply_app_parser() {
+    let s = "f 1 2";
+    assert_eq!(
+      app_parser().easy_parse(s),
+      Ok((app(app(Ident("f".to_owned()), Int(1)), Int(2)), ""))
+    )
+  }
+  #[test]
+  fn parse_int_app_parser() {
+    let s = "1";
+    assert_eq!(app_parser().easy_parse(s), Ok((Int(1), "")))
+  }
+  #[test]
+  fn parse_if0_app_parser() {
+    let s = "if true then 1 else 2";
+    assert_eq!(
+      app_parser().easy_parse(s),
+      Ok((ite(Bool(true), Int(1), Int(2)), ""))
+    )
+  }
+  #[test]
+  fn parse_if1_app_parser() {
+    let s = "if 1 < 2 then 1 + 2 else 3 * 4";
+    assert_eq!(
+      app_parser().easy_parse(s),
+      Ok((
+        ite(
+          lt(Int(1), Int(2)),
+          plus(Int(1), Int(2)),
+          times(Int(3), Int(4))
+        ),
+        ""
+      ))
+    )
+  }
+  #[test]
+  fn parse_if0_if_parser() {
+    let s = "if true then 1 else 2";
+    assert_eq!(
+      if_parser(calc_expr_env()).easy_parse(s),
+      Ok((ite(Bool(true), Int(1), Int(2)), ""))
+    )
+  }
+  #[test]
+  fn parse_if1_term_parser() {
+    let s = "if 1 < 2 then 1 + 2 else 3 * 4";
+    assert_eq!(
+      term_parser(calc_expr_env()).easy_parse(s),
+      Ok((
+        ite(
+          lt(Int(1), Int(2)),
+          plus(Int(1), Int(2)),
+          times(Int(3), Int(4))
+        ),
+        ""
+      ))
+    )
+  }
+  #[test]
+  fn parse_reserved_app_rest_parser() {
+    let s = "then";
+    assert_eq!(app_rest_parser().easy_parse(s), Ok((vec![], "then")))
   }
 }
