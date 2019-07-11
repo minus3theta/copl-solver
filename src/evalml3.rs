@@ -277,19 +277,31 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
     App(l, r) => {
       let pl = prove(env.clone(), l);
       let pr = prove(env.clone(), r);
-      let closure = pl.value.clone();
-      if let VClosure {
-        env: mut env_cl,
-        var,
-        expr: body,
-      } = closure
-      {
-        env_cl.0.push(env_pair(var, pr.value.clone()));
-        let p_cl = prove(env_cl, body.clone());
-        e_proof(env, expr, p_cl.value.clone(), EApp(Box::new(pl), Box::new(pr), Box::new(p_cl)))
-      } else {
-        panic!("Type error: not a closure")
-      }
+      let (mut env_cl, var) = {
+        if let VClosure {
+          ref env, ref var, ..
+        } = pl.value
+        {
+          (env.clone(), var.to_string())
+        } else {
+          panic!("Type error: not a closure")
+        }
+      };
+      let pl_box = Box::new(pl);
+      env_cl.0.push(env_pair(var, pr.value.clone()));
+      let p_cl = {
+        if let VClosure { expr: ref body, .. } = pl_box.value {
+          prove(env_cl, body)
+        } else {
+          panic!("Type error: not a closure")
+        }
+      };
+      e_proof(
+        env,
+        expr,
+        p_cl.value.clone(),
+        EApp(pl_box, Box::new(pr), Box::new(p_cl)),
+      )
     }
     _ => panic!("Unsupported expression"),
   }
