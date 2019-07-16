@@ -144,31 +144,31 @@ impl fmt::Display for BProof {
 }
 
 #[derive(Debug, PartialEq)]
-pub enum EProofKind<'a> {
+pub enum EProofKind {
   EInt,
   EBool,
-  EIfT(Box<EProof<'a>>, Box<EProof<'a>>),
-  EIfF(Box<EProof<'a>>, Box<EProof<'a>>),
-  EPlus(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
-  EMinus(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
-  ETimes(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
-  ELt(Box<EProof<'a>>, Box<EProof<'a>>, Box<BProof>),
+  EIfT(Box<EProof>, Box<EProof>),
+  EIfF(Box<EProof>, Box<EProof>),
+  EPlus(Box<EProof>, Box<EProof>, Box<BProof>),
+  EMinus(Box<EProof>, Box<EProof>, Box<BProof>),
+  ETimes(Box<EProof>, Box<EProof>, Box<BProof>),
+  ELt(Box<EProof>, Box<EProof>, Box<BProof>),
   EVar1,
-  EVar2(Box<EProof<'a>>),
-  ELet(Box<EProof<'a>>, Box<EProof<'a>>),
+  EVar2(Box<EProof>),
+  ELet(Box<EProof>, Box<EProof>),
   EFun,
-  EApp(Box<EProof<'a>>, Box<EProof<'a>>, Box<EProof<'a>>),
+  EApp(Box<EProof>, Box<EProof>, Box<EProof>),
 }
 
 #[derive(Debug, PartialEq)]
-pub struct EProof<'a> {
+pub struct EProof {
   env: Env,
-  expr: &'a Expr,
+  expr: Expr,
   value: Value,
-  kind: EProofKind<'a>,
+  kind: EProofKind,
 }
 
-fn e_proof<'a>(env: Env, expr: &'a Expr, value: Value, kind: EProofKind<'a>) -> EProof<'a> {
+fn e_proof(env: Env, expr: Expr, value: Value, kind: EProofKind) -> EProof {
   EProof {
     env,
     expr,
@@ -177,14 +177,14 @@ fn e_proof<'a>(env: Env, expr: &'a Expr, value: Value, kind: EProofKind<'a>) -> 
   }
 }
 
-fn prove_binop<'a, 'l, 'r>(
+fn prove_binop(
   env: Env,
-  expr: &'a Expr,
-  l: &'l Expr,
-  r: &'r Expr,
+  expr: Expr,
+  l: Expr,
+  r: Expr,
   b_prover: impl Fn(&Value, &Value) -> BProof,
-  constructor: impl Fn(Box<EProof<'l>>, Box<EProof<'r>>, Box<BProof>) -> EProofKind<'a>,
-) -> EProof<'a> {
+  constructor: impl Fn(Box<EProof>, Box<EProof>, Box<BProof>) -> EProofKind,
+) -> EProof {
   let pl = prove(env.clone(), l);
   let pr = prove(env.clone(), r);
   let pb = b_prover(&pl.value, &pr.value);
@@ -196,23 +196,23 @@ fn prove_binop<'a, 'l, 'r>(
   )
 }
 
-pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
+pub fn prove(env: Env, expr: Expr) -> EProof {
   use self::EProofKind::*;
   use self::Expr::*;
   use self::Value::*;
 
-  match expr {
-    Int(i) => e_proof(env, expr, VInt(*i), EInt),
-    Bool(b) => e_proof(env, expr, VBool(*b), EBool),
-    Plus(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_plus, EPlus),
-    Minus(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_minus, EMinus),
-    Times(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_times, ETimes),
-    Lt(l, r) => prove_binop(env, expr, l.as_ref(), r.as_ref(), b_lt, ELt),
+  match expr.clone() {
+    Int(i) => e_proof(env, expr, VInt(i), EInt),
+    Bool(b) => e_proof(env, expr, VBool(b), EBool),
+    Plus(l, r) => prove_binop(env, expr, *l, *r, b_plus, EPlus),
+    Minus(l, r) => prove_binop(env, expr, *l, *r, b_minus, EMinus),
+    Times(l, r) => prove_binop(env, expr, *l, *r, b_times, ETimes),
+    Lt(l, r) => prove_binop(env, expr, *l, *r, b_lt, ELt),
     If(p, t, f) => {
-      let pp = prove(env.clone(), p.as_ref());
+      let pp = prove(env.clone(), *p);
       match pp.value {
         VBool(true) => {
-          let pt = prove(env.clone(), t.as_ref());
+          let pt = prove(env.clone(), *t);
           e_proof(
             env,
             expr,
@@ -221,7 +221,7 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
           )
         }
         VBool(false) => {
-          let pf = prove(env.clone(), f.as_ref());
+          let pf = prove(env.clone(), *f);
           e_proof(
             env,
             expr,
@@ -242,18 +242,18 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
       } else {
         let mut next_env = env.clone();
         next_env.0.pop();
-        let p = prove(next_env, expr);
+        let p = prove(next_env, expr.clone());
         e_proof(env, expr, p.value.clone(), EVar2(Box::new(p)))
       }
     }
     Let(var, def, body) => {
-      let pdef = prove(env.clone(), def);
+      let pdef = prove(env.clone(), *def);
       let mut next_env = env.clone();
       next_env.0.push(EnvPair {
         var: var.clone(),
         value: pdef.value.clone(),
       });
-      let pbody = prove(next_env, body);
+      let pbody = prove(next_env, *body);
       e_proof(
         env,
         expr,
@@ -269,45 +269,37 @@ pub fn prove<'a>(env: Env, expr: &'a Expr) -> EProof<'a> {
         VClosure {
           env: env2,
           var: var.to_owned(),
-          expr: (**body).clone(),
+          expr: *body,
         },
         EFun,
       )
     }
     App(l, r) => {
-      let pl = prove(env.clone(), l);
-      let pr = prove(env.clone(), r);
-      let (mut env_cl, var) = {
-        if let VClosure {
-          ref env, ref var, ..
-        } = pl.value
-        {
-          (env.clone(), var.to_string())
-        } else {
-          panic!("Type error: not a closure")
-        }
-      };
-      let pl_box = Box::new(pl);
-      env_cl.0.push(env_pair(var, pr.value.clone()));
-      let p_cl = {
-        if let VClosure { expr: ref body, .. } = pl_box.value {
-          prove(env_cl, body)
-        } else {
-          panic!("Type error: not a closure")
-        }
-      };
-      e_proof(
-        env,
-        expr,
-        p_cl.value.clone(),
-        EApp(pl_box, Box::new(pr), Box::new(p_cl)),
-      )
+      let pl = prove(env.clone(), *l);
+      let pr = prove(env.clone(), *r);
+      if let VClosure {
+        env: mut env_cl,
+        var,
+        expr: body,
+      } = pl.value.clone()
+      {
+        env_cl.0.push(env_pair(var, pr.value.clone()));
+        let p_cl = prove(env_cl, body);
+        e_proof(
+          env,
+          expr,
+          p_cl.value.clone(),
+          EApp(Box::new(pl), Box::new(pr), Box::new(p_cl)),
+        )
+      } else {
+        panic!("Type error: not a closure")
+      }
     }
     _ => panic!("Unsupported expression"),
   }
 }
 
-impl<'a> EProof<'a> {
+impl EProof {
   fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
     use self::EProofKind::*;
     let print_binop =
@@ -411,12 +403,35 @@ impl<'a> EProof<'a> {
         pbody.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
-      _ => unimplemented!(),
+      EFun => write!(
+        f,
+        "{}{}|- {} evalto {} by E-Fun {{}}",
+        " ".repeat(offset),
+        self.env,
+        self.expr,
+        self.value
+      ),
+      EApp(pl, pr, pcl) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-App {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        pl.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        pr.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        pcl.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
     }
   }
 }
 
-impl<'a> fmt::Display for EProof<'a> {
+impl fmt::Display for EProof {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     self.print(f, 0)
   }
@@ -451,6 +466,25 @@ mod test {
     assert_eq!(
       judgement_parser().easy_parse(s),
       Ok((judgement(Env(vec![]), plus(Int(1), Int(2)), VInt(3)), ""))
+    )
+  }
+  #[test]
+  fn parse_judgement3() {
+    let s = "|- fun x -> x + 1 evalto ()[fun x -> x + 1]";
+    assert_eq!(
+      judgement_parser().easy_parse(s),
+      Ok((
+        judgement(
+          Env(vec![]),
+          fun("x".to_owned(), plus(Ident("x".to_owned()), Int(1))),
+          VClosure {
+            env: Env(vec![]),
+            var: "x".to_owned(),
+            expr: plus(Ident("x".to_owned()), Int(1))
+          }
+        ),
+        ""
+      ))
     )
   }
 }

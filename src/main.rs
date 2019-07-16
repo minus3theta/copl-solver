@@ -1,4 +1,4 @@
-
+#![recursion_limit = "256"]
 pub mod evalml1;
 pub mod evalml2;
 pub mod evalml3;
@@ -13,7 +13,7 @@ fn main() {
   let mut input = String::new();
   std::io::stdin().read_line(&mut input).unwrap();
   let input: &str = &input;
-  let judge = evalml2::judgement_parser().easy_parse(input).unwrap().0;
-  let proof = evalml2::prove(judge.env, &judge.expr);
+  let judge = evalml3::judgement_parser().easy_parse(input).unwrap().0;
+  let proof = evalml3::prove(judge.env, judge.expr);
   println!("{}", proof);
 }
