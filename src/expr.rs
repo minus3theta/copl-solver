@@ -404,6 +404,18 @@ pub fn env_pair(var: String, value: Value) -> EnvPair {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Env(pub Vec<EnvPair>);
 
+impl Env {
+  pub fn new() -> Self {
+    Env(Vec::new())
+  }
+
+  pub fn merge(&self, other: &Self) -> Self {
+    let mut v = self.0.clone();
+    v.append(&mut other.0.clone());
+    Env(v)
+  }
+}
+
 parser! {
   pub fn env_pair_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> EnvPair
   where [

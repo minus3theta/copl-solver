@@ -153,8 +153,9 @@ pub enum EProofKind {
   EAppRec(Box<EProof>, Box<EProof>, Box<EProof>),
   ENil,
   ECons(Box<EProof>, Box<EProof>),
-  EMatchNil(Box<EProof>, Box<EProof>),
-  EMatchCons(Box<EProof>, Box<EProof>),
+  EMatchM1(Box<EProof>, Box<MProof>, Box<EProof>),
+  EMatchM2(Box<EProof>, Box<MProof>, Box<EProof>),
+  EMatchN(Box<EProof>, Box<NMProof>, Box<EProof>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -503,10 +504,10 @@ impl EProof {
         pr.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
-      EMatchNil(p1, p2) => {
+      EMatchM1(p1, m, p2) => {
         write!(
           f,
-          "{}{}|- {} evalto {} by E-MatchNil {{\n",
+          "{}{}|- {} evalto {} by E-MatchM1 {{\n",
           " ".repeat(offset),
           self.env,
           self.expr,
@@ -514,19 +515,39 @@ impl EProof {
         )?;
         p1.print(f, offset + 2)?;
         write!(f, ";\n")?;
+        m.print(f, offset + 2)?;
+        write!(f, ";\n")?;
         p2.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
-      EMatchCons(p1, p2) => {
+      EMatchM2(p1, m, p2) => {
         write!(
           f,
-          "{}{}|- {} evalto {} by E-MatchCons {{\n",
+          "{}{}|- {} evalto {} by E-MatchM2 {{\n",
           " ".repeat(offset),
           self.env,
           self.expr,
           self.value,
         )?;
         p1.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        m.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        p2.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      EMatchN(p1, n, p2) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-MatchM1 {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        p1.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        n.print(f, offset + 2)?;
         write!(f, ";\n")?;
         p2.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
@@ -536,6 +557,156 @@ impl EProof {
 }
 
 impl fmt::Display for EProof {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    self.print(f, 0)
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct MProof {
+  value: Value,
+  pattern: Pattern,
+  env: Env,
+  kind: MProofKind,
+}
+
+fn m_proof(value: Value, pattern: Pattern, env: Env, kind: MProofKind) -> MProof {
+  MProof {
+    value,
+    pattern,
+    env,
+    kind,
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum MProofKind {
+  MVar,
+  MNil,
+  MCons(Box<MProof>, Box<MProof>),
+  MWild,
+}
+
+impl MProof {
+  fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
+    use self::MProofKind::*;
+    match &self.kind {
+      MVar => write!(
+        f,
+        "{}{} matches {} when ({}) by M-Var {{}}",
+        " ".repeat(offset),
+        self.value,
+        self.pattern,
+        self.env
+      ),
+      MNil => write!(
+        f,
+        "{}{} matches {} when ({}) by M-Nil {{}}",
+        " ".repeat(offset),
+        self.value,
+        self.pattern,
+        self.env
+      ),
+      MCons(l, r) => {
+        write!(
+          f,
+          "{}{} matches {} when ({}) by M-Cons {{\n",
+          " ".repeat(offset),
+          self.value,
+          self.pattern,
+          self.env
+        )?;
+        l.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        r.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      MWild => write!(
+        f,
+        "{}{} matches {} when ({}) by M-Wild {{}}",
+        " ".repeat(offset),
+        self.value,
+        self.pattern,
+        self.env
+      ),
+    }
+  }
+}
+
+impl fmt::Display for MProof {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    self.print(f, 0)
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct NMProof {
+  value: Value,
+  pattern: Pattern,
+  kind: NMProofKind,
+}
+
+fn nm_proof(value: Value, pattern: Pattern, kind: NMProofKind) -> NMProof {
+  NMProof {
+    value,
+    pattern,
+    kind,
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum NMProofKind {
+  NMConsNil,
+  NMNilCons,
+  NMConsConsL(Box<NMProof>),
+  NMConsConsR(Box<NMProof>),
+}
+
+impl NMProof {
+  fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
+    use self::NMProofKind::*;
+    match &self.kind {
+      NMConsNil => write!(
+        f,
+        "{}{} doesn't match {} by NM-ConsNil {{}}",
+        " ".repeat(offset),
+        self.value,
+        self.pattern,
+      ),
+      NMNilCons => write!(
+        f,
+        "{}{} doesn't match {} by NM-NilCons {{}}",
+        " ".repeat(offset),
+        self.value,
+        self.pattern,
+      ),
+      NMConsConsL(p) => {
+        write!(
+          f,
+          "{}{} doesn't match {} by NM-ConsConsL {{\n",
+          " ".repeat(offset),
+          self.value,
+          self.pattern,
+        )?;
+        p.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      NMConsConsR(p) => {
+        write!(
+          f,
+          "{}{} doesn't match {} by NM-ConsConsR {{\n",
+          " ".repeat(offset),
+          self.value,
+          self.pattern,
+        )?;
+        p.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+    }
+  }
+}
+
+impl fmt::Display for NMProof {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     self.print(f, 0)
   }
