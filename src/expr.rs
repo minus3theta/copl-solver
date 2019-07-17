@@ -20,7 +20,7 @@ pub enum Expr {
   LetRec(String, String, Box<Expr>, Box<Expr>),
   Nil,
   Cons(Box<Expr>, Box<Expr>),
-  Match2(Box<Expr>, Box<Expr>, String, String, Box<Expr>),
+  Match(Box<Expr>, Box<Clause>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -48,7 +48,7 @@ where
       rest: alpha_num(),
       reserved: [
         "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
-        "evalto", "[]", "->", "|-", "|",
+        "evalto", "[]", "->", "|-", "|", "_",
       ]
       .iter()
       .map(|x| (*x).into())
@@ -142,7 +142,7 @@ parser! {
 }
 
 parser! {
-  pub fn match2_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Expr
+  pub fn match_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Expr
   where [
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -152,11 +152,8 @@ parser! {
   {
     (
       expr_env.reserved("match").with(expr_parser()),
-      (expr_env.reserved("with"), expr_env.reserved("[]"), expr_env.reserved("->")).with(expr_parser()),
-      expr_env.reserved("|").with(expr_env.identifier()),
-      expr_env.reserved_op("::").with(expr_env.identifier()),
-      expr_env.reserved("->").with(expr_parser())
-    ).map(|(target, e1, vcar, vcdr, e2)| match2(target, e1, vcar, vcdr, e2))
+      expr_env.reserved("with").with(clause_parser(calc_expr_env()))
+    ).map(|(e, c)| Expr::Match(Box::new(e), Box::new(c)))
   }
 }
 
@@ -173,7 +170,7 @@ parser! {
       if_parser(calc_expr_env()),
       let_parser(calc_expr_env()),
       fun_parser(calc_expr_env()).map(|(var, body)| fun(var, body)),
-      match2_parser(calc_expr_env()),
+      match_parser(calc_expr_env()),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
       expr_env.reserved("[]").map(|_| Expr::Nil),
@@ -241,7 +238,7 @@ parser! {
       if_parser(calc_expr_env()),
       let_parser(calc_expr_env()),
       fun_parser(calc_expr_env()).map(|(var, body)| fun(var, body)),
-      match2_parser(calc_expr_env()),
+      match_parser(calc_expr_env()),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
       expr_env.reserved("[]").map(|_| Expr::Nil),
@@ -320,10 +317,6 @@ pub fn app(f: Expr, x: Expr) -> Expr {
 
 pub fn fun(var: String, body: Expr) -> Expr {
   Expr::Fun(var, Box::new(body))
-}
-
-pub fn match2(target: Expr, e1: Expr, vcar: String, vcdr: String, e2: Expr) -> Expr {
-  Expr::Match2(Box::new(target), Box::new(e1), vcar, vcdr, Box::new(e2))
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -440,6 +433,88 @@ parser! {
   }
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub enum Pattern {
+  PVar(String),
+  PNil,
+  PCons(Box<Pattern>, Box<Pattern>),
+  PWild,
+}
+
+pub fn p_cons(l: Pattern, r: Pattern) -> Pattern {
+  Pattern::PCons(Box::new(l), Box::new(r))
+}
+
+parser! {
+  pub fn pattern_atom_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Pattern
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    choice!(
+      expr_env.identifier().map(|x| Pattern::PVar(x)),
+      expr_env.reserved("[]").map(|_| Pattern::PNil),
+      expr_env.reserved("_").map(|_| Pattern::PWild),
+      expr_env.parens(pattern_parser(calc_expr_env()))
+    )
+  }
+}
+
+parser! {
+  pub fn pattern_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Pattern
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (
+      pattern_atom_parser(calc_expr_env()),
+      optional(expr_env.reserved_op("::").with(pattern_parser(calc_expr_env())))
+    ).map(|(l, r)| {
+      match r {
+        None => l,
+        Some(r) => p_cons(l, r)
+      }
+    })
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Clause {
+  pub pattern: Pattern,
+  pub expr: Expr,
+  pub next: Option<Box<Clause>>,
+}
+
+parser! {
+  pub fn clause_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Clause
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (
+      pattern_parser(calc_expr_env()),
+      expr_env.reserved("->").with(expr_parser()),
+      optional(expr_env.reserved("|").with(clause_parser(calc_expr_env())))
+    ).map(|(pattern, expr, next)| {
+      Clause {
+        pattern,
+        expr,
+        next: next.map(Box::new)
+      }
+    })
+  }
+}
+
+
 use std::fmt;
 
 impl fmt::Display for Expr {
@@ -460,11 +535,7 @@ impl fmt::Display for Expr {
       LetRec(x, y, d, b) => write!(f, "(let rec {} = fun {} -> {} in {})", x, y, d, b),
       Nil => write!(f, "[]"),
       Cons(l, r) => write!(f, "({} :: {})", l, r),
-      Match2(t, e1, vcar, vcdr, e2) => write!(
-        f,
-        "(match {} with [] -> {} | {} :: {} -> {})",
-        t, e1, vcar, vcdr, e2
-      ),
+      Match(e, c) => write!(f, "(match {} with {})", e, c),
     }
   }
 }
@@ -498,6 +569,28 @@ impl fmt::Display for Env {
       } else {
         write!(f, " ")?;
       }
+    }
+    Ok(())
+  }
+}
+
+impl fmt::Display for Pattern {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    use expr::Pattern::*;
+    match self {
+      PVar(x) => write!(f, "{}", x),
+      PNil => write!(f, "[]"),
+      PCons(l, r) => write!(f, "({} :: {})", *l, *r),
+      PWild => write!(f, "_"),
+    }
+  }
+}
+
+impl fmt::Display for Clause {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{} -> {}", self.pattern, self.expr)?;
+    if let Some(ref next) = self.next {
+      write!(f, "| {}", next)?;
     }
     Ok(())
   }
@@ -748,17 +841,64 @@ mod test {
   }
   #[test]
   fn parse_match() {
+    use expr::Pattern::*;
     let s = "match x with [] -> 0 | a :: b -> a";
     assert_eq!(
       expr_parser().easy_parse(s),
       Ok((
-        match2(
-          Ident("x".to_owned()),
-          Int(0),
-          "a".to_owned(),
-          "b".to_owned(),
-          Ident("a".to_owned())
+        Match(
+          Box::new(Ident("x".to_owned())),
+          Box::new(Clause {
+            pattern: PNil,
+            expr: Int(0),
+            next: Some(Box::new(Clause {
+              pattern: p_cons(PVar("a".to_owned()), PVar("b".to_owned())),
+              expr: Ident("a".to_owned()),
+              next: None
+            }))
+          })
         ),
+        ""
+      ))
+    )
+  }
+  #[test]
+  fn parse_pattern_cons() {
+    use expr::Pattern::*;
+    let s = "x :: _ :: []";
+    assert_eq!(
+      pattern_parser(calc_expr_env()).easy_parse(s),
+      Ok((p_cons(PVar("x".to_owned()), p_cons(PWild, PNil)), ""))
+    )
+  }
+  #[test]
+  fn parse_pattern_nest() {
+    use expr::Pattern::*;
+    let s = "(x :: []) :: y";
+    assert_eq!(
+      pattern_parser(calc_expr_env()).easy_parse(s),
+      Ok((
+        p_cons(p_cons(PVar("x".to_owned()), PNil), PVar("y".to_owned())),
+        ""
+      ))
+    )
+  }
+  #[test]
+  fn parse_clause() {
+    use expr::Pattern::*;
+    let s = "[] -> 1 | _ :: _ -> 2";
+    assert_eq!(
+      clause_parser(calc_expr_env()).easy_parse(s),
+      Ok((
+        Clause {
+          pattern: PNil,
+          expr: Int(1),
+          next: Some(Box::new(Clause {
+            pattern: p_cons(PWild, PWild),
+            expr: Int(2),
+            next: None
+          }))
+        },
         ""
       ))
     )
