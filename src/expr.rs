@@ -48,7 +48,8 @@ where
       start: letter(),
       rest: alpha_num(),
       reserved: [
-        "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with", "evalto",
+        "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
+        "evalto", "[]",
       ]
       .iter()
       .map(|x| (*x).into())
@@ -157,6 +158,7 @@ parser! {
       fun_parser(calc_expr_env()).map(|(var, body)| fun(var, body)),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
+      expr_env.reserved("[]").map(|_| Expr::Nil),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Expr::Int(
         match neg {
           None => x,
@@ -223,6 +225,7 @@ parser! {
       fun_parser(calc_expr_env()).map(|(var, body)| fun(var, body)),
       expr_env.reserved("true").map(|_| Expr::Bool(true)),
       expr_env.reserved("false").map(|_| Expr::Bool(false)),
+      expr_env.reserved("[]").map(|_| Expr::Nil),
       expr_env.integer().map(Expr::Int),
       expr_env.parens(expr_parser()),
       attempt(expr_env.identifier().map(Expr::Ident))
@@ -304,10 +307,23 @@ pub fn fun(var: String, body: Expr) -> Expr {
 pub enum Value {
   VBool(bool),
   VInt(i64),
-  VClosure { env: Env, var: String, expr: Expr },
-  VRec { env: Env, var: String, arg: String, expr: Expr },
+  VClosure {
+    env: Env,
+    var: String,
+    expr: Expr,
+  },
+  VRec {
+    env: Env,
+    var: String,
+    arg: String,
+    expr: Expr,
+  },
   VCons(Box<Value>, Box<Value>),
   VNil,
+}
+
+pub fn v_cons(l: Value, r: Value) -> Value {
+  Value::VCons(Box::new(l), Box::new(r))
 }
 
 parser! {
@@ -319,13 +335,36 @@ parser! {
       From<::std::num::ParseIntError>,
   ]
   {
+    (
+      value_atom_parser(calc_expr_env()),
+      optional(expr_env.reserved_op("::").with(value_parser(calc_expr_env())))
+    ).map(|(l, r)| {
+      match r {
+        None => l,
+        Some(r) => v_cons(l, r),
+      }
+    })
+  }
+}
+
+parser! {
+  pub fn value_atom_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Value
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
     choice!(
       expr_env.reserved("true").map(|_| Value::VBool(true)),
       expr_env.reserved("false").map(|_| Value::VBool(false)),
-      (
+      expr_env.reserved("[]").map(|_| Value::VNil),
+      attempt((
         expr_env.parens(env_parser()),
         expr_env.brackets(fun_parser(calc_expr_env()))
-      ).map(|(env, (var, expr))| Value::VClosure { env, var, expr }),
+      ).map(|(env, (var, expr))| Value::VClosure { env, var, expr })),
+      expr_env.parens(value_parser(calc_expr_env())),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Value::VInt(
         match neg {
           None => x,
@@ -397,7 +436,7 @@ impl fmt::Display for Expr {
       App(l, r) => write!(f, "({} {})", l, r),
       LetRec(x, y, d, b) => write!(f, "(let rec {} = fun {} -> {} in {})", x, y, d, b),
       Nil => write!(f, "[]"),
-      Cons(_, _) => unimplemented!(),
+      Cons(l, r) => write!(f, "({} :: {})", l, r),
       Match(_, _, _, _, _) => unimplemented!(),
     }
   }
@@ -410,9 +449,14 @@ impl fmt::Display for Value {
       VBool(b) => b.fmt(f),
       VInt(i) => i.fmt(f),
       VClosure { env, var, expr } => write!(f, "({})[fun {} -> {}]", env, var, expr),
-      VRec { env, var, arg, expr } => write!(f, "({})[rec {} = fun {} -> {}]", env, var, arg, expr),
+      VRec {
+        env,
+        var,
+        arg,
+        expr,
+      } => write!(f, "({})[rec {} = fun {} -> {}]", env, var, arg, expr),
       VNil => write!(f, "[]"),
-      VCons(_, _) => unimplemented!(),
+      VCons(l, r) => write!(f, "({} :: {})", l, r),
     }
   }
 }
@@ -435,6 +479,7 @@ impl fmt::Display for Env {
 #[cfg(test)]
 mod test {
   use super::Expr::*;
+  use super::Value::*;
   use super::*;
   #[test]
   fn parse_expr1() {
@@ -656,6 +701,22 @@ mod test {
         ),
         ""
       ))
+    )
+  }
+  #[test]
+  fn parse_cons() {
+    let s = "1 + 2 :: 3 :: []";
+    assert_eq!(
+      expr_parser().easy_parse(s),
+      Ok((cons(plus(Int(1), Int(2)), cons(Int(3), Nil)), ""))
+    )
+  }
+  #[test]
+  fn parse_value_cons() {
+    let s = "1 :: 3 :: []";
+    assert_eq!(
+      value_parser(calc_expr_env()).easy_parse(s),
+      Ok((v_cons(VInt(1), v_cons(VInt(3), VNil)), ""))
     )
   }
 }
