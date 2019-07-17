@@ -107,11 +107,21 @@ parser! {
       From<::std::num::ParseIntError>,
   ]
   {
-    (
-      expr_env.reserved("let").with(expr_env.identifier()),
-      (spaces(), token('='), spaces()).with(expr_parser()),
-      expr_env.reserved("in").with(expr_parser())
-    ).map(|(var, def, body)| let_in(var, def, body))
+    expr_env.reserved("let")
+    .with(
+      (
+        expr_env.reserved("rec").with(expr_env.identifier()),
+        (spaces(), token('='), spaces()).with(fun_parser(calc_expr_env())),
+        expr_env.reserved("in").with(expr_parser())
+      ).map(|(var, (arg, def), body)| let_rec(var, arg, def, body))
+      .or(
+        (
+          expr_env.identifier(),
+          (spaces(), token('='), spaces()).with(expr_parser()),
+          expr_env.reserved("in").with(expr_parser())
+        ).map(|(var, def, body)| let_in(var, def, body))
+      )
+    )
   }
 }
 
@@ -278,6 +288,10 @@ pub fn let_in(var: String, def: Expr, body: Expr) -> Expr {
   Expr::Let(var, Box::new(def), Box::new(body))
 }
 
+pub fn let_rec(var: String, arg: String, def: Expr, body: Expr) -> Expr {
+  Expr::LetRec(var, arg, Box::new(def), Box::new(body))
+}
+
 pub fn app(f: Expr, x: Expr) -> Expr {
   Expr::App(Box::new(f), Box::new(x))
 }
@@ -291,6 +305,7 @@ pub enum Value {
   VBool(bool),
   VInt(i64),
   VClosure { env: Env, var: String, expr: Expr },
+  VRec { env: Env, var: String, arg: String, expr: Expr },
   VCons(Box<Value>, Box<Value>),
   VNil,
 }
@@ -380,7 +395,7 @@ impl fmt::Display for Expr {
       Let(s, d, b) => write!(f, "(let {} = {} in {})", s, d, b),
       Fun(x, e) => write!(f, "(fun {} -> {})", x, e),
       App(l, r) => write!(f, "({} {})", l, r),
-      LetRec(_, _, _, _) => unimplemented!(),
+      LetRec(x, y, d, b) => write!(f, "(let rec {} = fun {} -> {} in {})", x, y, d, b),
       Nil => write!(f, "[]"),
       Cons(_, _) => unimplemented!(),
       Match(_, _, _, _, _) => unimplemented!(),
@@ -395,6 +410,7 @@ impl fmt::Display for Value {
       VBool(b) => b.fmt(f),
       VInt(i) => i.fmt(f),
       VClosure { env, var, expr } => write!(f, "({})[fun {} -> {}]", env, var, expr),
+      VRec { env, var, arg, expr } => write!(f, "({})[rec {} = fun {} -> {}]", env, var, arg, expr),
       VNil => write!(f, "[]"),
       VCons(_, _) => unimplemented!(),
     }
@@ -625,5 +641,21 @@ mod test {
   fn parse_reserved_app_rest_parser() {
     let s = "then";
     assert_eq!(app_rest_parser().easy_parse(s), Ok((vec![], "then")))
+  }
+  #[test]
+  fn parse_letrec() {
+    let s = "let rec f = fun x -> x in f 1";
+    assert_eq!(
+      expr_parser().easy_parse(s),
+      Ok((
+        let_rec(
+          "f".to_owned(),
+          "x".to_owned(),
+          Ident("x".to_owned()),
+          app(Ident("f".to_owned()), Int(1))
+        ),
+        ""
+      ))
+    )
   }
 }

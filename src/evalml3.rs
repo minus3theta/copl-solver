@@ -158,6 +158,8 @@ pub enum EProofKind {
   ELet(Box<EProof>, Box<EProof>),
   EFun,
   EApp(Box<EProof>, Box<EProof>, Box<EProof>),
+  ELetRec(Box<EProof>),
+  EAppRec(Box<EProof>, Box<EProof>, Box<EProof>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -277,23 +279,41 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
     App(l, r) => {
       let pl = prove(env.clone(), *l);
       let pr = prove(env.clone(), *r);
-      if let VClosure {
-        env: mut env_cl,
-        var,
-        expr: body,
-      } = pl.value.clone()
-      {
-        env_cl.0.push(env_pair(var, pr.value.clone()));
-        let p_cl = prove(env_cl, body);
-        e_proof(
-          env,
-          expr,
-          p_cl.value.clone(),
-          EApp(Box::new(pl), Box::new(pr), Box::new(p_cl)),
-        )
-      } else {
-        panic!("Type error: not a closure")
+      match pl.value.clone() {
+        VClosure {
+          env: mut env_cl,
+          var,
+          expr: body,
+        } => {
+          env_cl.0.push(env_pair(var, pr.value.clone()));
+          let p_cl = prove(env_cl, body);
+          e_proof(
+            env,
+            expr,
+            p_cl.value.clone(),
+            EApp(Box::new(pl), Box::new(pr), Box::new(p_cl)),
+          )
+        }
+        VRec {
+          env: mut env_cl,
+          var,
+          arg,
+          expr: body,
+        } => {
+          env_cl.0.push(env_pair(var, pl.value.clone()));
+          env_cl.0.push(env_pair(arg, pr.value.clone()));
+          let p_cl = prove(env_cl, body);
+          e_proof(env, expr, p_cl.value.clone(), EAppRec(Box::new(pl), Box::new(pr), Box::new(p_cl)))
+        }
+        _ => panic!("Type error: not a closure")
       }
+    }
+    LetRec(var, arg, def, body) => {
+      let closure = VRec { env: env.clone(), var: var.clone(), arg, expr: *def };
+      let mut next_env = env.clone();
+      next_env.0.push(EnvPair { var, value: closure });
+      let p = prove(next_env, *body);
+      e_proof(env, expr, p.value.clone(), ELetRec(Box::new(p)))
     }
     _ => panic!("Unsupported expression"),
   }
@@ -415,6 +435,34 @@ impl EProof {
         write!(
           f,
           "{}{}|- {} evalto {} by E-App {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        pl.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        pr.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        pcl.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      ELetRec(p) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-LetRec {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        p.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      EAppRec(pl, pr, pcl) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-AppRec {{\n",
           " ".repeat(offset),
           self.env,
           self.expr,
