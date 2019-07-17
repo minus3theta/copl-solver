@@ -334,7 +334,10 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
         ECons(Box::new(pl), Box::new(pr)),
       )
     }
-    Match(_, _) => unimplemented!(),
+    Match(e1, c) => {
+      let p1 = prove(env.clone(), *e1);
+      unimplemented!()
+    }
   }
 }
 
@@ -570,13 +573,13 @@ pub struct MProof {
   kind: MProofKind,
 }
 
-fn m_proof(pattern: Pattern, value: Value, env: Env, kind: MProofKind) -> MProof {
-  MProof {
+fn m_proof(pattern: Pattern, value: Value, env: Env, kind: MProofKind) -> MatchProof {
+  MatchProof::Matches(MProof {
     pattern,
     value,
     env,
     kind,
-  }
+  })
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -646,12 +649,12 @@ pub struct NMProof {
   kind: NMProofKind,
 }
 
-fn nm_proof(pattern: Pattern, value: Value, kind: NMProofKind) -> NMProof {
-  NMProof {
+fn nm_proof(pattern: Pattern, value: Value, kind: NMProofKind) -> MatchProof {
+  MatchProof::NotMatch(NMProof {
     pattern,
     value,
     kind,
-  }
+  })
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -709,6 +712,26 @@ impl NMProof {
 impl fmt::Display for NMProof {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     self.print(f, 0)
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum MatchProof {
+  Matches(MProof),
+  NotMatch(NMProof),
+}
+
+pub fn try_match(pattern: Pattern, value: Value) -> MatchProof {
+  use self::MProofKind::*;
+  use self::Pattern::*;
+  use self::Value::*;
+  match pattern.clone() {
+    PVar(x) => m_proof(pattern, value.clone(), Env(vec![env_pair(x, value)]), MVar),
+    PNil => match value {
+      VNil => m_proof(pattern, value, Env::new(), MNil),
+      _ => panic!("Type error: Not a nil"),
+    },
+    _ => unimplemented!(),
   }
 }
 
