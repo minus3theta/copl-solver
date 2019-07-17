@@ -564,16 +564,16 @@ impl fmt::Display for EProof {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct MProof {
-  value: Value,
   pattern: Pattern,
+  value: Value,
   env: Env,
   kind: MProofKind,
 }
 
-fn m_proof(value: Value, pattern: Pattern, env: Env, kind: MProofKind) -> MProof {
+fn m_proof(pattern: Pattern, value: Value, env: Env, kind: MProofKind) -> MProof {
   MProof {
-    value,
     pattern,
+    value,
     env,
     kind,
   }
@@ -595,16 +595,16 @@ impl MProof {
         f,
         "{}{} matches {} when ({}) by M-Var {{}}",
         " ".repeat(offset),
-        self.value,
         self.pattern,
+        self.value,
         self.env
       ),
       MNil => write!(
         f,
         "{}{} matches {} when ({}) by M-Nil {{}}",
         " ".repeat(offset),
-        self.value,
         self.pattern,
+        self.value,
         self.env
       ),
       MCons(l, r) => {
@@ -612,8 +612,8 @@ impl MProof {
           f,
           "{}{} matches {} when ({}) by M-Cons {{\n",
           " ".repeat(offset),
-          self.value,
           self.pattern,
+          self.value,
           self.env
         )?;
         l.print(f, offset + 2)?;
@@ -625,8 +625,8 @@ impl MProof {
         f,
         "{}{} matches {} when ({}) by M-Wild {{}}",
         " ".repeat(offset),
-        self.value,
         self.pattern,
+        self.value,
         self.env
       ),
     }
@@ -641,15 +641,15 @@ impl fmt::Display for MProof {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct NMProof {
-  value: Value,
   pattern: Pattern,
+  value: Value,
   kind: NMProofKind,
 }
 
-fn nm_proof(value: Value, pattern: Pattern, kind: NMProofKind) -> NMProof {
+fn nm_proof(pattern: Pattern, value: Value, kind: NMProofKind) -> NMProof {
   NMProof {
-    value,
     pattern,
+    value,
     kind,
   }
 }
@@ -670,23 +670,23 @@ impl NMProof {
         f,
         "{}{} doesn't match {} by NM-ConsNil {{}}",
         " ".repeat(offset),
-        self.value,
         self.pattern,
+        self.value,
       ),
       NMNilCons => write!(
         f,
         "{}{} doesn't match {} by NM-NilCons {{}}",
         " ".repeat(offset),
-        self.value,
         self.pattern,
+        self.value,
       ),
       NMConsConsL(p) => {
         write!(
           f,
           "{}{} doesn't match {} by NM-ConsConsL {{\n",
           " ".repeat(offset),
-          self.value,
           self.pattern,
+          self.value,
         )?;
         p.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
@@ -696,8 +696,8 @@ impl NMProof {
           f,
           "{}{} doesn't match {} by NM-ConsConsR {{\n",
           " ".repeat(offset),
-          self.value,
           self.pattern,
+          self.value,
         )?;
         p.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
