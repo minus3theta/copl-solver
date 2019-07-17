@@ -1,7 +1,6 @@
 use combine::parser::char::{alpha_num, letter, string};
 use combine::{
-  attempt, char::spaces, optional, parser, satisfy, sep_by, token, tokens, ParseError, Parser,
-  Stream,
+  attempt, char::spaces, optional, parser, satisfy, sep_by, token, ParseError, Parser, Stream,
 };
 use combine_language::{expression_parser, Assoc, Fixity, Identifier, LanguageDef, LanguageEnv};
 
@@ -49,7 +48,7 @@ where
       rest: alpha_num(),
       reserved: [
         "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
-        "evalto", "[]",
+        "evalto", "[]", "->", "|-",
       ]
       .iter()
       .map(|x| (*x).into())
@@ -136,9 +135,8 @@ parser! {
   ]
   {
     (
-      (spaces(), expr_env.reserved("fun"), spaces()).with(expr_env.identifier()),
-      (spaces(), tokens(|l, r| l == r, "->".into(), "->".chars()),spaces())
-        .with(expr_parser()).skip(spaces())
+      expr_env.reserved("fun").with(expr_env.identifier()),
+      expr_env.reserved("->").with(expr_parser())
     )
   }
 }

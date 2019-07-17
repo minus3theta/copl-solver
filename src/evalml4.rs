@@ -1,5 +1,5 @@
-use combine::parser::char::spaces;
-use combine::{parser, tokens, ParseError, Stream};
+use combine::{parser, ParseError, Stream};
+use combine_language::LanguageEnv;
 use expr::*;
 use std::fmt;
 
@@ -11,7 +11,7 @@ pub struct Judgement {
 }
 
 parser! {
-  pub fn judgement_parser[I]()(I) -> Judgement
+  pub fn judgement_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Judgement
   where [
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -20,16 +20,8 @@ parser! {
   ]
   {
     (
-      env_parser().skip((
-        spaces(),
-        tokens(|l, r| l == r, "|-".into(), "|-".chars()),
-        spaces(),
-      )),
-      expr_parser().skip((
-        spaces(),
-        tokens(|l, r| l == r, "evalto".into(), "evalto".chars()),
-        spaces()
-      )),
+      env_parser().skip(expr_env.reserved("|-")),
+      expr_parser().skip(expr_env.reserved("evalto")),
       value_parser(calc_expr_env())
     ).map(|(env, e, v)| {
       Judgement { env, expr: e, value: v }
@@ -305,15 +297,28 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
           env_cl.0.push(env_pair(var, pl.value.clone()));
           env_cl.0.push(env_pair(arg, pr.value.clone()));
           let p_cl = prove(env_cl, body);
-          e_proof(env, expr, p_cl.value.clone(), EAppRec(Box::new(pl), Box::new(pr), Box::new(p_cl)))
+          e_proof(
+            env,
+            expr,
+            p_cl.value.clone(),
+            EAppRec(Box::new(pl), Box::new(pr), Box::new(p_cl)),
+          )
         }
-        _ => panic!("Type error: not a closure")
+        _ => panic!("Type error: not a closure"),
       }
     }
     LetRec(var, arg, def, body) => {
-      let closure = VRec { env: env.clone(), var: var.clone(), arg, expr: *def };
+      let closure = VRec {
+        env: env.clone(),
+        var: var.clone(),
+        arg,
+        expr: *def,
+      };
       let mut next_env = env.clone();
-      next_env.0.push(EnvPair { var, value: closure });
+      next_env.0.push(EnvPair {
+        var,
+        value: closure,
+      });
       let p = prove(next_env, *body);
       e_proof(env, expr, p.value.clone(), ELetRec(Box::new(p)))
     }
@@ -321,7 +326,12 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
     Cons(l, r) => {
       let pl = prove(env.clone(), *l);
       let pr = prove(env.clone(), *r);
-      e_proof(env, expr, v_cons(pl.value.clone(), pr.value.clone()), ECons(Box::new(pl), Box::new(pr)))
+      e_proof(
+        env,
+        expr,
+        v_cons(pl.value.clone(), pr.value.clone()),
+        ECons(Box::new(pl), Box::new(pr)),
+      )
     }
     _ => panic!("Unsupported expression"),
   }
@@ -524,7 +534,7 @@ mod test {
   fn parse_judgement1() {
     let s = "x = 3, y = 2 |- x evalto 3";
     assert_eq!(
-      judgement_parser().easy_parse(s),
+      judgement_parser(calc_expr_env()).easy_parse(s),
       Ok((
         judgement(
           Env(vec![
@@ -542,7 +552,7 @@ mod test {
   fn parse_judgement2() {
     let s = "|- 1 + 2 evalto 3";
     assert_eq!(
-      judgement_parser().easy_parse(s),
+      judgement_parser(calc_expr_env()).easy_parse(s),
       Ok((judgement(Env(vec![]), plus(Int(1), Int(2)), VInt(3)), ""))
     )
   }
@@ -550,7 +560,7 @@ mod test {
   fn parse_judgement3() {
     let s = "|- fun x -> x + 1 evalto ()[fun x -> x + 1]";
     assert_eq!(
-      judgement_parser().easy_parse(s),
+      judgement_parser(calc_expr_env()).easy_parse(s),
       Ok((
         judgement(
           Env(vec![]),
