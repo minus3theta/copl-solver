@@ -145,8 +145,7 @@ pub enum EProofKind {
   EMinus(Box<EProof>, Box<EProof>, Box<BProof>),
   ETimes(Box<EProof>, Box<EProof>, Box<BProof>),
   ELt(Box<EProof>, Box<EProof>, Box<BProof>),
-  EVar1,
-  EVar2(Box<EProof>),
+  EVar,
   ELet(Box<EProof>, Box<EProof>),
   EFun,
   EApp(Box<EProof>, Box<EProof>, Box<EProof>),
@@ -154,6 +153,8 @@ pub enum EProofKind {
   EAppRec(Box<EProof>, Box<EProof>, Box<EProof>),
   ENil,
   ECons(Box<EProof>, Box<EProof>),
+  EMatchNil(Box<EProof>, Box<EProof>),
+  EMatchCons(Box<EProof>, Box<EProof>),
 }
 
 #[derive(Debug, PartialEq)]
@@ -229,17 +230,16 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
       }
     }
     Ident(x) => {
-      if env.0.is_empty() {
-        panic!("Undefined variable")
-      }
-      let EnvPair { var, value } = env.0.last().unwrap().clone();
-      if *x == var {
-        e_proof(env, expr, value, EVar1)
+      if let Some(EnvPair { value, .. }) = env
+        .0
+        .clone()
+        .into_iter()
+        .rev()
+        .find(|EnvPair { var, .. }| *var == x)
+      {
+        e_proof(env, expr, value, EVar)
       } else {
-        let mut next_env = env.clone();
-        next_env.0.pop();
-        let p = prove(next_env, expr.clone());
-        e_proof(env, expr, p.value.clone(), EVar2(Box::new(p)))
+        panic!("Undefined variable")
       }
     }
     Let(var, def, body) => {
@@ -333,7 +333,33 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
         ECons(Box::new(pl), Box::new(pr)),
       )
     }
-    _ => panic!("Unsupported expression"),
+    Match2(target, e1, vcar, vcdr, e2) => {
+      let pt = prove(env.clone(), *target);
+      match pt.value.clone() {
+        VNil => {
+          let p1 = prove(env.clone(), *e1);
+          e_proof(
+            env,
+            expr,
+            p1.value.clone(),
+            EMatchNil(Box::new(pt), Box::new(p1)),
+          )
+        }
+        VCons(car, cdr) => {
+          let mut next_env = env.clone();
+          next_env.0.push(env_pair(vcar, *car));
+          next_env.0.push(env_pair(vcdr, *cdr));
+          let p2 = prove(next_env, *e2);
+          e_proof(
+            env,
+            expr,
+            p2.value.clone(),
+            EMatchCons(Box::new(pt), Box::new(p2)),
+          )
+        }
+        _ => panic!("Type error: not a list"),
+      }
+    }
   }
 }
 
@@ -407,26 +433,14 @@ impl EProof {
         pf.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
-      EVar1 => write!(
+      EVar => write!(
         f,
-        "{}{}|- {} evalto {} by E-Var1 {{}}",
+        "{}{}|- {} evalto {} by E-Var {{}}",
         " ".repeat(offset),
         self.env,
         self.expr,
         self.value
       ),
-      EVar2(p) => {
-        write!(
-          f,
-          "{}{}|- {} evalto {} by E-Var2 {{\n",
-          " ".repeat(offset),
-          self.env,
-          self.expr,
-          self.value,
-        )?;
-        p.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
-      }
       ELet(pdef, pbody) => {
         write!(
           f,
@@ -513,6 +527,34 @@ impl EProof {
         pl.print(f, offset + 2)?;
         write!(f, ";\n")?;
         pr.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      EMatchNil(p1, p2) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-MatchNil {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        p1.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        p2.print(f, offset + 2)?;
+        write!(f, "\n{}}}", " ".repeat(offset))
+      }
+      EMatchCons(p1, p2) => {
+        write!(
+          f,
+          "{}{}|- {} evalto {} by E-MatchCons {{\n",
+          " ".repeat(offset),
+          self.env,
+          self.expr,
+          self.value,
+        )?;
+        p1.print(f, offset + 2)?;
+        write!(f, ";\n")?;
+        p2.print(f, offset + 2)?;
         write!(f, "\n{}}}", " ".repeat(offset))
       }
     }
