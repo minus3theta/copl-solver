@@ -45,7 +45,7 @@ where
   LanguageEnv::new(LanguageDef {
     ident: Identifier {
       start: letter(),
-      rest: alpha_num(),
+      rest: alpha_num().or(token('\'')),
       reserved: [
         "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
         "evalto", "[]", "->", "|-", "|", "_",
@@ -602,7 +602,7 @@ impl fmt::Display for Clause {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     write!(f, "{} -> {}", self.pattern, self.expr)?;
     if let Some(ref next) = self.next {
-      write!(f, "| {}", next)?;
+      write!(f, " | {}", next)?;
     }
     Ok(())
   }
