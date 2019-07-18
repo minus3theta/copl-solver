@@ -1,4 +1,4 @@
-use combine::{parser, ParseError, Stream, sep_by, optional, many};
+use combine::{many, optional, parser, sep_by, ParseError, Stream};
 use combine_language::LanguageEnv;
 use expr::*;
 use std::fmt;
@@ -43,6 +43,9 @@ pub struct TypeEnv(Vec<(String, Type)>);
 impl TypeEnv {
   pub fn new() -> Self {
     Self(Vec::new())
+  }
+  pub fn push(&mut self, var: String, typ: Type) {
+    self.0.push((var, typ));
   }
 }
 
@@ -169,26 +172,180 @@ pub struct TProof {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum TProofKind {
-  TInt,
-  TBool,
-  TIf(Box<TProof>, Box<TProof>, Box<TProof>),
-  TPlus(Box<TProof>, Box<TProof>),
-  TMinus(Box<TProof>, Box<TProof>),
-  TTimes(Box<TProof>, Box<TProof>),
-  TLt(Box<TProof>, Box<TProof>),
-  TVar,
-  TLet(Box<TProof>, Box<TProof>),
-  TFun(Box<TProof>),
-  TApp(Box<TProof>, Box<TProof>),
-  TLetRec(Box<TProof>, Box<TProof>),
-  TNil,
-  TCons(Box<TProof>, Box<TProof>),
-  TMatch(Box<TProof>, Box<TProof>, Box<TProof>),
+  TPInt,
+  TPBool,
+  TPIf(Box<TProof>, Box<TProof>, Box<TProof>),
+  TPPlus(Box<TProof>, Box<TProof>),
+  TPMinus(Box<TProof>, Box<TProof>),
+  TPTimes(Box<TProof>, Box<TProof>),
+  TPLt(Box<TProof>, Box<TProof>),
+  TPVar,
+  TPLet(Box<TProof>, Box<TProof>),
+  TPFun(Box<TProof>),
+  TPApp(Box<TProof>, Box<TProof>),
+  TPLetRec(Box<TProof>, Box<TProof>),
+  TPNil,
+  TPCons(Box<TProof>, Box<TProof>),
+  TPMatch(Box<TProof>, Box<TProof>, Box<TProof>),
+}
+
+pub fn prove(env: TypeEnv, expr: Expr, typ: Option<Type>) -> TProof {
+  use self::Expr::*;
+  use self::TProofKind::*;
+  use self::Type::*;
+  match expr.clone() {
+    Int(_) => {
+      if let Some(typ) = typ {
+        assert_eq!(typ, TInt);
+      }
+      TProof {
+        env,
+        expr,
+        typ: TInt,
+        kind: TPInt,
+      }
+    }
+    Bool(_) => {
+      if let Some(typ) = typ {
+        assert_eq!(typ, TBool);
+      }
+      TProof {
+        env,
+        expr,
+        typ: TBool,
+        kind: TPBool,
+      }
+    }
+    If(p, t, f) => {
+      let tp = prove(env.clone(), *p, Some(TBool));
+      let tt = prove(env.clone(), *t, typ.clone());
+      let tf = prove(env.clone(), *f, typ.clone());
+      assert_eq!(tt.typ, tf.typ);
+      TProof {
+        env,
+        expr,
+        typ: tt.typ.clone(),
+        kind: TPIf(Box::new(tp), Box::new(tt), Box::new(tf)),
+      }
+    }
+    Plus(l, r) => {
+      if let Some(typ) = typ {
+        assert_eq!(typ, TInt);
+      }
+      let tl = prove(env.clone(), *l, Some(TInt));
+      let tr = prove(env.clone(), *r, Some(TInt));
+      TProof {
+        env,
+        expr,
+        typ: TInt,
+        kind: TPPlus(Box::new(tl), Box::new(tr)),
+      }
+    }
+    Minus(l, r) => {
+      if let Some(typ) = typ {
+        assert_eq!(typ, TInt);
+      }
+      let tl = prove(env.clone(), *l, Some(TInt));
+      let tr = prove(env.clone(), *r, Some(TInt));
+      TProof {
+        env,
+        expr,
+        typ: TInt,
+        kind: TPMinus(Box::new(tl), Box::new(tr)),
+      }
+    }
+    Times(l, r) => {
+      if let Some(typ) = typ {
+        assert_eq!(typ, TInt);
+      }
+      let tl = prove(env.clone(), *l, Some(TInt));
+      let tr = prove(env.clone(), *r, Some(TInt));
+      TProof {
+        env,
+        expr,
+        typ: TInt,
+        kind: TPTimes(Box::new(tl), Box::new(tr)),
+      }
+    }
+    Lt(l, r) => {
+      if let Some(typ) = typ {
+        assert_eq!(typ, TBool);
+      }
+      let tl = prove(env.clone(), *l, Some(TInt));
+      let tr = prove(env.clone(), *r, Some(TInt));
+      TProof {
+        env,
+        expr,
+        typ: TBool,
+        kind: TPLt(Box::new(tl), Box::new(tr)),
+      }
+    }
+    Ident(x) => {
+      if let Some((_, t)) = env.0.clone().into_iter().rev().find(|(var, _)| *var == x) {
+        if let Some(typ) = typ {
+          assert_eq!(typ, t);
+        }
+        TProof {
+          env,
+          expr,
+          typ: t,
+          kind: TPVar,
+        }
+      } else {
+        panic!("Undefined variable")
+      }
+    }
+    Let(var, def, body) => {
+      let td = prove(env.clone(), *def, None);
+      let mut next_env = env.clone();
+      next_env.push(var, td.typ.clone());
+      let tb = prove(next_env, *body, typ.clone());
+      if let Some(typ) = typ {
+        assert_eq!(typ, tb.typ);
+      }
+      TProof {
+        env,
+        expr,
+        typ: tb.typ.clone(),
+        kind: TPLet(Box::new(td), Box::new(tb)),
+      }
+    }
+    Fun(var, body) => {
+      if let Some(TFun(l, r)) = typ {
+        let mut next_env = env.clone();
+        next_env.push(var, *l.clone());
+        let t = prove(next_env, *body, Some(*r.clone()));
+        TProof {
+          env,
+          expr,
+          typ: TFun(l, r),
+          kind: TPFun(Box::new(t)),
+        }
+      } else {
+        panic!("Cannot decide type of function")
+      }
+    }
+    _ => unimplemented!(),
+  }
 }
 
 impl TProof {
-  fn print_multi(f: &mut fmt::Formatter, offset: usize, proofs: Vec<&Self>) -> fmt::Result {
+  fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
+    let (rule, proofs) = Self::extract(&self.kind);
+    write!(
+      f,
+      "{}{}|- {} : {} by {} ",
+      " ".repeat(offset),
+      self.env,
+      self.expr,
+      self.typ,
+      rule
+    )?;
     let n = proofs.len();
+    if n == 0 {
+      return write!(f, "{{}}");
+    }
+    write!(f, "{{\n")?;
     for (i, p) in proofs.iter().enumerate() {
       p.print(f, offset + 2)?;
       if i == n - 1 {
@@ -197,11 +354,23 @@ impl TProof {
         write!(f, ";\n")?;
       }
     }
-    Ok(())
+    write!(f, "{}}}", " ".repeat(offset))
   }
-  fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
+  fn extract(kind: &TProofKind) -> (&str, Vec<&TProof>) {
     use self::TProofKind::*;
-    Ok(())
+    match kind {
+      TPInt => ("T-Int", Vec::new()),
+      TPBool => ("T-Bool", Vec::new()),
+      TPIf(p, t, f) => ("T-If", vec![p, t, f]),
+      TPPlus(l, r) => ("T-Plus", vec![l, r]),
+      TPMinus(l, r) => ("T-Minus", vec![l, r]),
+      TPTimes(l, r) => ("T-Times", vec![l, r]),
+      TPLt(l, r) => ("T-Lt", vec![l, r]),
+      TPVar => ("T-Var", Vec::new()),
+      TPLet(d, b) => ("T-Let", vec![d, b]),
+      TPFun(f) => ("T-Fun", vec![f]),
+      _ => unimplemented!(),
+    }
   }
 }
 
@@ -214,25 +383,20 @@ impl fmt::Display for TProof {
 #[cfg(test)]
 mod test {
   use super::super::expr::Expr::*;
+  use super::Type::*;
   use super::*;
   use combine::Parser;
-  use super::Type::*;
   #[test]
   fn parse_type_int() {
     let s = "int";
-    assert_eq!(
-      type_parser(calc_expr_env()).easy_parse(s),
-      Ok((TInt, ""))
-    )
+    assert_eq!(type_parser(calc_expr_env()).easy_parse(s), Ok((TInt, "")))
   }
   #[test]
   fn parse_type_list() {
     let s = "bool list list";
     assert_eq!(
       type_parser(calc_expr_env()).easy_parse(s),
-      Ok((
-        TList(Box::new(TList(Box::new(TBool)))), ""
-      ))
+      Ok((TList(Box::new(TList(Box::new(TBool)))), ""))
     )
   }
   #[test]
@@ -241,7 +405,11 @@ mod test {
     assert_eq!(
       type_parser(calc_expr_env()).easy_parse(s),
       Ok((
-        TFun(Box::new(TBool), Box::new(TFun(Box::new(TInt), Box::new(TInt)))), ""
+        TFun(
+          Box::new(TBool),
+          Box::new(TFun(Box::new(TInt), Box::new(TInt)))
+        ),
+        ""
       ))
     )
   }
@@ -250,9 +418,7 @@ mod test {
     let s = "(bool -> int) list";
     assert_eq!(
       type_parser(calc_expr_env()).easy_parse(s),
-      Ok((
-        TList(Box::new(TFun(Box::new(TBool), Box::new(TInt)))), ""
-      ))
+      Ok((TList(Box::new(TFun(Box::new(TBool), Box::new(TInt)))), ""))
     )
   }
   #[test]
@@ -261,7 +427,11 @@ mod test {
     assert_eq!(
       type_parser(calc_expr_env()).easy_parse(s),
       Ok((
-        TFun(Box::new(TList(Box::new(TInt))), Box::new(TList(Box::new(TBool)))), ""
+        TFun(
+          Box::new(TList(Box::new(TInt))),
+          Box::new(TList(Box::new(TBool)))
+        ),
+        ""
       ))
     )
   }
@@ -275,7 +445,8 @@ mod test {
           env: TypeEnv::new(),
           expr: plus(Int(3), Int(5)),
           typ: TInt
-        }, ""
+        },
+        ""
       ))
     )
   }
