@@ -346,30 +346,28 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
               env,
               expr,
               p2.value.clone(),
-              EMatchM1(Box::new(p1), Box::new(m), Box::new(p2))
+              EMatchM1(Box::new(p1), Box::new(m), Box::new(p2)),
             ),
             Some(_) => e_proof(
               env,
               expr,
               p2.value.clone(),
-              EMatchM2(Box::new(p1), Box::new(m), Box::new(p2))
+              EMatchM2(Box::new(p1), Box::new(m), Box::new(p2)),
             ),
           }
         }
-        NotMatch(nm) => {
-          match c.next {
-            None => panic!("Non-exhaustive pattern"),
-            Some(next) => {
-              let p2 = prove(env.clone(), Match(e1, next));
-              e_proof(
-                env,
-                expr,
-                p2.value.clone(),
-                EMatchN(Box::new(p1), Box::new(nm), Box::new(p2))
-              )
-            }
+        NotMatch(nm) => match c.next {
+          None => panic!("Non-exhaustive pattern"),
+          Some(next) => {
+            let p2 = prove(env.clone(), Match(e1, next));
+            e_proof(
+              env,
+              expr,
+              p2.value.clone(),
+              EMatchN(Box::new(p1), Box::new(nm), Box::new(p2)),
+            )
           }
-        }
+        },
       }
     }
   }
@@ -576,7 +574,7 @@ impl EProof {
       EMatchN(p1, n, p2) => {
         write!(
           f,
-          "{}{}|- {} evalto {} by E-MatchM1 {{\n",
+          "{}{}|- {} evalto {} by E-MatchN {{\n",
           " ".repeat(offset),
           self.env,
           self.expr,
@@ -756,10 +754,10 @@ pub enum MatchProof {
 }
 
 pub fn try_match(pattern: Pattern, value: Value) -> MatchProof {
-  use self::MProofKind::*;
-  use self::NMProofKind::*;
-  use self::MatchProof::*;
   use self::Pattern::*;
+  use self::MProofKind::*;
+  use self::MatchProof::*;
+  use self::NMProofKind::*;
   use self::Value::*;
   match pattern.clone() {
     PVar(x) => m_proof(pattern, value.clone(), Env(vec![env_pair(x, value)]), MVar),
@@ -767,22 +765,23 @@ pub fn try_match(pattern: Pattern, value: Value) -> MatchProof {
       VNil => m_proof(pattern, value, Env::new(), MNil),
       VCons(_, _) => nm_proof(pattern, value, NMConsNil),
       _ => panic!("Type error: Value is not a list"),
-    }
+    },
     PCons(pl, pr) => match value.clone() {
       VNil => nm_proof(pattern, value, NMNilCons),
-      VCons(vl, vr) => {
-        match try_match(*pl, *vl) {
-          Matches(ml) => {
-            match try_match(*pr, *vr) {
-              Matches(mr) => m_proof(pattern, value, ml.env.merge(&mr.env), MCons(Box::new(ml), Box::new(mr))),
-              NotMatch(nmr) => nm_proof(pattern, value, NMConsConsR(Box::new(nmr)))
-            }
-          }
-          NotMatch(nml) => nm_proof(pattern, value, NMConsConsL(Box::new(nml)))
-        }
-      }
+      VCons(vl, vr) => match try_match(*pl, *vl) {
+        Matches(ml) => match try_match(*pr, *vr) {
+          Matches(mr) => m_proof(
+            pattern,
+            value,
+            ml.env.merge(&mr.env),
+            MCons(Box::new(ml), Box::new(mr)),
+          ),
+          NotMatch(nmr) => nm_proof(pattern, value, NMConsConsR(Box::new(nmr))),
+        },
+        NotMatch(nml) => nm_proof(pattern, value, NMConsConsL(Box::new(nml))),
+      },
       _ => panic!("Type error: Value is not a list"),
-    }
+    },
     PWild => m_proof(pattern, value, Env::new(), MWild),
   }
 }
