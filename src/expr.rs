@@ -48,7 +48,7 @@ where
       rest: alpha_num(),
       reserved: [
         "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
-        "evalto", "[]", "->", "|-", "|",
+        "evalto", "[]", "->", "|-", "|", ":", ",", "bool", "int", "list",
       ]
       .iter()
       .map(|x| (*x).into())
