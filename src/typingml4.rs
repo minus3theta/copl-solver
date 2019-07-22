@@ -1,10 +1,10 @@
 use combine::{many, optional, parser, sep_by, ParseError, Stream};
 use combine_language::LanguageEnv;
 use expr::*;
-
 use std::collections::HashMap;
 use std::fmt;
-#[derive(Debug, PartialEq, Clone)]
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TypeJudgement {
   pub env: TypeEnv,
   pub expr: Expr,
@@ -33,7 +33,7 @@ parser! {
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TypeVar(usize);
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TypeVarFactory {
   current: usize,
 }
@@ -58,10 +58,22 @@ pub enum Type {
   TList(Box<Type>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+impl Type {
+  pub fn is_free(&self, v: &TypeVar) -> bool {
+    use self::Type::*;
+    match self {
+      TVar(x) => x == v,
+      TBool | TInt => false,
+      TFun(l, r) => l.is_free(v) || r.is_free(v),
+      TList(t) => t.is_free(v),
+    }
+  }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TypeEnv(Vec<(String, Type)>);
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TypeScheme {
   pub scheme: Vec<TypeVar>,
   pub typ: Type,
@@ -76,14 +88,20 @@ impl TypeEnv {
   }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct TypeSubst(HashMap<TypeVar, Type>);
 
 impl TypeSubst {
   pub fn new() -> Self {
     Self(HashMap::new())
   }
-  pub fn substitute(&self, typ: &Type) -> Type {
+  pub fn append(&mut self, typ: Type, var: TypeVar) {
+    self.0.insert(var, typ);
+  }
+  pub fn singleton(typ: Type, var: TypeVar) -> Self {
+    Self([(var, typ)].iter().cloned().collect())
+  }
+  pub fn subst_type(&self, typ: &Type) -> Type {
     use self::Type::*;
     match typ {
       TVar(x) => match self.0.get(x) {
@@ -93,10 +111,73 @@ impl TypeSubst {
       TBool => TBool,
       TInt => TInt,
       TFun(l, r) => TFun(
-        Box::new(self.substitute(l.as_ref())),
-        Box::new(self.substitute(r.as_ref())),
+        Box::new(self.subst_type(l.as_ref())),
+        Box::new(self.subst_type(r.as_ref())),
       ),
-      TList(x) => TList(Box::new(self.substitute(x.as_ref()))),
+      TList(x) => TList(Box::new(self.subst_type(x.as_ref()))),
+    }
+  }
+  pub fn subst_type_env(&self, env: TypeEnv) -> TypeEnv {
+    TypeEnv(
+      env
+        .0
+        .into_iter()
+        .map(|(x, t)| (x, self.subst_type(&t)))
+        .collect(),
+    )
+  }
+  pub fn subst_type_formula(&self, fm: TypeFormula) -> TypeFormula {
+    TypeFormula(
+      fm
+        .0
+        .into_iter()
+        .map(|(t1, t2)| (self.subst_type(&t1), self.subst_type(&t2)))
+        .collect(),
+    )
+  }
+  pub fn compose(&mut self, typ: &Type, var: TypeVar) {
+    let t = self.subst_type(typ);
+    self.append(t, var);
+  }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct TypeFormula(Vec<(Type, Type)>);
+
+impl From<TypeSubst> for TypeFormula {
+  fn from(subst: TypeSubst) -> Self {
+    let vec = subst
+      .0
+      .into_iter()
+      .map(|(v, t)| (Type::TVar(v), t))
+      .collect();
+    TypeFormula(vec)
+  }
+}
+
+impl TypeFormula {
+  pub fn unify(mut self) -> Result<TypeSubst, ()> {
+    use self::Type::*;
+    match self.0.pop() {
+      None => Ok(TypeSubst::new()),
+      Some((t1, t2)) => {
+        if t1 == t2 {
+          return self.unify();
+        }
+        match (t1, t2) {
+          (TVar(v), t) | (t, TVar(v)) => {
+            if t.is_free(&v) {
+              Err(())
+            } else {
+              let s1 = TypeSubst::singleton(t.clone(), v.clone());
+              let mut s2 = s1.subst_type_formula(self).unify()?;
+              s2.compose(&t, v);
+              Ok(s2)
+            }
+          }
+          _ => unimplemented!()
+        }
+      }
     }
   }
 }
@@ -225,7 +306,7 @@ impl fmt::Display for TypeEnv {
   }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TProof {
   pub env: TypeEnv,
   pub expr: Expr,
@@ -233,7 +314,7 @@ pub struct TProof {
   pub kind: TProofKind,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum TProofKind {
   TPInt,
   TPBool,
@@ -405,7 +486,7 @@ mod test {
     let mut sub = TypeSubst::new();
     sub.0.insert(TypeVar(0), TInt);
     assert_eq!(
-      sub.substitute(&TFun(
+      sub.subst_type(&TFun(
         Box::new(TBool),
         Box::new(TList(Box::new(TVar(TypeVar(0)))))
       )),

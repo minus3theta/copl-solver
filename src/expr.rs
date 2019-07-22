@@ -4,7 +4,7 @@ use combine::{
 };
 use combine_language::{expression_parser, Assoc, Fixity, Identifier, LanguageDef, LanguageEnv};
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Expr {
   Bool(bool),
   Int(i64),
@@ -23,7 +23,7 @@ pub enum Expr {
   Match2(Box<Expr>, Box<Expr>, String, String, Box<Expr>),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Op {
   Plus,
   Minus,
@@ -326,7 +326,7 @@ pub fn match2(target: Expr, e1: Expr, vcar: String, vcdr: String, e2: Expr) -> E
   Expr::Match2(Box::new(target), Box::new(e1), vcar, vcdr, Box::new(e2))
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Value {
   VBool(bool),
   VInt(i64),
@@ -398,7 +398,7 @@ parser! {
   }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct EnvPair {
   pub var: String,
   pub value: Value,
@@ -408,7 +408,7 @@ pub fn env_pair(var: String, value: Value) -> EnvPair {
   EnvPair { var, value }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct Env(pub Vec<EnvPair>);
 
 parser! {
