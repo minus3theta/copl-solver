@@ -16,6 +16,6 @@ fn main() {
     .easy_parse(input)
     .unwrap()
     .0;
-  let proof = typingml4::prove(judge.env, judge.expr, Some(judge.typ));
-  println!("{}", proof);
+  let proof = typingml4::prove(judge.env, judge.expr, &mut typingml4::TypeVarFactory::new());
+  println!("{}", proof.1);
 }

@@ -1,8 +1,9 @@
 use combine::{many, optional, parser, sep_by, ParseError, Stream};
 use combine_language::LanguageEnv;
 use expr::*;
-use std::fmt;
 
+use std::collections::HashMap;
+use std::fmt;
 #[derive(Debug, PartialEq, Clone)]
 pub struct TypeJudgement {
   pub env: TypeEnv,
@@ -29,8 +30,28 @@ parser! {
   }
 }
 
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct TypeVar(usize);
+
 #[derive(Debug, PartialEq, Clone)]
+pub struct TypeVarFactory {
+  current: usize,
+}
+
+impl TypeVarFactory {
+  pub fn new() -> Self {
+    Self { current: 0 }
+  }
+  pub fn get(&mut self) -> TypeVar {
+    let ret = TypeVar(self.current);
+    self.current += 1;
+    ret
+  }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Type {
+  TVar(TypeVar),
   TBool,
   TInt,
   TFun(Box<Type>, Box<Type>),
@@ -40,12 +61,43 @@ pub enum Type {
 #[derive(Debug, PartialEq, Clone)]
 pub struct TypeEnv(Vec<(String, Type)>);
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct TypeScheme {
+  pub scheme: Vec<TypeVar>,
+  pub typ: Type,
+}
+
 impl TypeEnv {
   pub fn new() -> Self {
     Self(Vec::new())
   }
   pub fn push(&mut self, var: String, typ: Type) {
     self.0.push((var, typ));
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct TypeSubst(HashMap<TypeVar, Type>);
+
+impl TypeSubst {
+  pub fn new() -> Self {
+    Self(HashMap::new())
+  }
+  pub fn substitute(&self, typ: &Type) -> Type {
+    use self::Type::*;
+    match typ {
+      TVar(x) => match self.0.get(x) {
+        None => TVar(x.clone()),
+        Some(t) => t.clone(),
+      },
+      TBool => TBool,
+      TInt => TInt,
+      TFun(l, r) => TFun(
+        Box::new(self.substitute(l.as_ref())),
+        Box::new(self.substitute(r.as_ref())),
+      ),
+      TList(x) => TList(Box::new(self.substitute(x.as_ref()))),
+    }
   }
 }
 
@@ -135,10 +187,21 @@ parser! {
   }
 }
 
+impl fmt::Display for TypeVar {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if self.0 < 26 {
+      write!(f, "'{}", char::from(self.0 as u8))
+    } else {
+      write!(f, "'{}", self.0)
+    }
+  }
+}
+
 impl fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     use self::Type::*;
     match self {
+      TVar(v) => write!(f, "{}", v),
       TBool => write!(f, "bool"),
       TInt => write!(f, "int"),
       TFun(l, r) => write!(f, "({} -> {})", l, r),
@@ -189,142 +252,29 @@ pub enum TProofKind {
   TPMatch(Box<TProof>, Box<TProof>, Box<TProof>),
 }
 
-pub fn prove(env: TypeEnv, expr: Expr, typ: Option<Type>) -> TProof {
+pub fn prove(env: TypeEnv, expr: Expr, fac: &mut TypeVarFactory) -> (TypeSubst, TProof) {
   use self::Expr::*;
   use self::TProofKind::*;
   use self::Type::*;
   match expr.clone() {
-    Int(_) => {
-      if let Some(typ) = typ {
-        assert_eq!(typ, TInt);
-      }
+    Int(_) => (
+      TypeSubst::new(),
       TProof {
         env,
         expr,
         typ: TInt,
         kind: TPInt,
-      }
-    }
-    Bool(_) => {
-      if let Some(typ) = typ {
-        assert_eq!(typ, TBool);
-      }
+      },
+    ),
+    Bool(_) => (
+      TypeSubst::new(),
       TProof {
         env,
         expr,
         typ: TBool,
         kind: TPBool,
-      }
-    }
-    If(p, t, f) => {
-      let tp = prove(env.clone(), *p, Some(TBool));
-      let tt = prove(env.clone(), *t, typ.clone());
-      let tf = prove(env.clone(), *f, typ.clone());
-      assert_eq!(tt.typ, tf.typ);
-      TProof {
-        env,
-        expr,
-        typ: tt.typ.clone(),
-        kind: TPIf(Box::new(tp), Box::new(tt), Box::new(tf)),
-      }
-    }
-    Plus(l, r) => {
-      if let Some(typ) = typ {
-        assert_eq!(typ, TInt);
-      }
-      let tl = prove(env.clone(), *l, Some(TInt));
-      let tr = prove(env.clone(), *r, Some(TInt));
-      TProof {
-        env,
-        expr,
-        typ: TInt,
-        kind: TPPlus(Box::new(tl), Box::new(tr)),
-      }
-    }
-    Minus(l, r) => {
-      if let Some(typ) = typ {
-        assert_eq!(typ, TInt);
-      }
-      let tl = prove(env.clone(), *l, Some(TInt));
-      let tr = prove(env.clone(), *r, Some(TInt));
-      TProof {
-        env,
-        expr,
-        typ: TInt,
-        kind: TPMinus(Box::new(tl), Box::new(tr)),
-      }
-    }
-    Times(l, r) => {
-      if let Some(typ) = typ {
-        assert_eq!(typ, TInt);
-      }
-      let tl = prove(env.clone(), *l, Some(TInt));
-      let tr = prove(env.clone(), *r, Some(TInt));
-      TProof {
-        env,
-        expr,
-        typ: TInt,
-        kind: TPTimes(Box::new(tl), Box::new(tr)),
-      }
-    }
-    Lt(l, r) => {
-      if let Some(typ) = typ {
-        assert_eq!(typ, TBool);
-      }
-      let tl = prove(env.clone(), *l, Some(TInt));
-      let tr = prove(env.clone(), *r, Some(TInt));
-      TProof {
-        env,
-        expr,
-        typ: TBool,
-        kind: TPLt(Box::new(tl), Box::new(tr)),
-      }
-    }
-    Ident(x) => {
-      if let Some((_, t)) = env.0.clone().into_iter().rev().find(|(var, _)| *var == x) {
-        if let Some(typ) = typ {
-          assert_eq!(typ, t);
-        }
-        TProof {
-          env,
-          expr,
-          typ: t,
-          kind: TPVar,
-        }
-      } else {
-        panic!("Undefined variable")
-      }
-    }
-    Let(var, def, body) => {
-      let td = prove(env.clone(), *def, None);
-      let mut next_env = env.clone();
-      next_env.push(var, td.typ.clone());
-      let tb = prove(next_env, *body, typ.clone());
-      if let Some(typ) = typ {
-        assert_eq!(typ, tb.typ);
-      }
-      TProof {
-        env,
-        expr,
-        typ: tb.typ.clone(),
-        kind: TPLet(Box::new(td), Box::new(tb)),
-      }
-    }
-    Fun(var, body) => {
-      if let Some(TFun(l, r)) = typ {
-        let mut next_env = env.clone();
-        next_env.push(var, *l.clone());
-        let t = prove(next_env, *body, Some(*r.clone()));
-        TProof {
-          env,
-          expr,
-          typ: TFun(l, r),
-          kind: TPFun(Box::new(t)),
-        }
-      } else {
-        panic!("Cannot decide type of function")
-      }
-    }
+      },
+    ),
     _ => unimplemented!(),
   }
 }
@@ -448,6 +398,18 @@ mod test {
         },
         ""
       ))
+    )
+  }
+  #[test]
+  fn type_substitute() {
+    let mut sub = TypeSubst::new();
+    sub.0.insert(TypeVar(0), TInt);
+    assert_eq!(
+      sub.substitute(&TFun(
+        Box::new(TBool),
+        Box::new(TList(Box::new(TVar(TypeVar(0)))))
+      )),
+      TFun(Box::new(TBool), Box::new(TList(Box::new(TInt))))
     )
   }
 }
