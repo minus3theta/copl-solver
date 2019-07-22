@@ -86,6 +86,9 @@ impl TypeEnv {
   pub fn push(&mut self, var: String, typ: Type) {
     self.0.push((var, typ));
   }
+  pub fn find<'a>(&'a self, var: &String) -> Option<&'a Type> {
+    self.0.iter().find(|(v, _)| v == var).map(|(_, t)| t)
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -95,7 +98,7 @@ impl TypeSubst {
   pub fn new() -> Self {
     Self(HashMap::new())
   }
-  pub fn append(&mut self, typ: Type, var: TypeVar) {
+  pub fn push(&mut self, typ: Type, var: TypeVar) {
     self.0.insert(var, typ);
   }
   pub fn singleton(typ: Type, var: TypeVar) -> Self {
@@ -128,16 +131,54 @@ impl TypeSubst {
   }
   pub fn subst_type_formula(&self, fm: TypeFormula) -> TypeFormula {
     TypeFormula(
-      fm
-        .0
+      fm.0
         .into_iter()
         .map(|(t1, t2)| (self.subst_type(&t1), self.subst_type(&t2)))
         .collect(),
     )
   }
+  pub fn subst_tproof_box(&self, proof: Box<TProof>) -> Box<TProof> {
+    Box::new(self.subst_tproof(*proof))
+  }
+  pub fn subst_tproof(&self, proof: TProof) -> TProof {
+    use self::TProofKind::*;
+    let TProof {
+      env,
+      expr,
+      typ,
+      kind,
+    } = proof;
+    TProof {
+      env: self.subst_type_env(env),
+      expr,
+      typ: self.subst_type(&typ),
+      kind: match kind {
+        TPIf(p, t, f) => TPIf(
+          self.subst_tproof_box(p),
+          self.subst_tproof_box(t),
+          self.subst_tproof_box(f),
+        ),
+        TPPlus(l, r) => TPPlus(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPMinus(l, r) => TPMinus(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPTimes(l, r) => TPTimes(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPLt(l, r) => TPLt(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPLet(l, r) => TPLet(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPFun(e) => TPFun(self.subst_tproof_box(e)),
+        TPApp(l, r) => TPApp(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPLetRec(l, r) => TPLetRec(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPCons(l, r) => TPCons(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPMatch(e1, e2, e3) => TPMatch(
+          self.subst_tproof_box(e1),
+          self.subst_tproof_box(e2),
+          self.subst_tproof_box(e3),
+        ),
+        k => k,
+      },
+    }
+  }
   pub fn compose(&mut self, typ: &Type, var: TypeVar) {
     let t = self.subst_type(typ);
-    self.append(t, var);
+    self.push(t, var);
   }
 }
 
@@ -156,7 +197,11 @@ impl From<TypeSubst> for TypeFormula {
 }
 
 impl TypeFormula {
-  pub fn unify(mut self) -> Result<TypeSubst, ()> {
+  pub fn push(&mut self, t1: Type, t2: Type) -> &mut Self {
+    self.0.push((t1, t2));
+    self
+  }
+  pub fn unify(mut self) -> Result<TypeSubst, &'static str> {
     use self::Type::*;
     match self.0.pop() {
       None => Ok(TypeSubst::new()),
@@ -167,7 +212,7 @@ impl TypeFormula {
         match (t1, t2) {
           (TVar(v), t) | (t, TVar(v)) => {
             if t.is_free(&v) {
-              Err(())
+              Err("Not a free variable")
             } else {
               let s1 = TypeSubst::singleton(t.clone(), v.clone());
               let mut s2 = s1.subst_type_formula(self).unify()?;
@@ -175,10 +220,21 @@ impl TypeFormula {
               Ok(s2)
             }
           }
-          _ => unimplemented!()
+          (TFun(a1, b1), TFun(a2, b2)) => {
+            self.push(*a1, *a2).push(*b1, *b2);
+            self.unify()
+          }
+          (TList(t1), TList(t2)) => {
+            self.push(*t1, *t2);
+            self.unify()
+          }
+          _ => Err("Type mismatch"),
         }
       }
     }
+  }
+  pub fn append(&mut self, other: &mut Self) {
+    self.0.append(&mut other.0);
   }
 }
 
@@ -271,7 +327,7 @@ parser! {
 impl fmt::Display for TypeVar {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     if self.0 < 26 {
-      write!(f, "'{}", char::from(self.0 as u8))
+      write!(f, "'{}", char::from('a' as u8 + self.0 as u8))
     } else {
       write!(f, "'{}", self.0)
     }
@@ -333,12 +389,55 @@ pub enum TProofKind {
   TPMatch(Box<TProof>, Box<TProof>, Box<TProof>),
 }
 
-pub fn prove(env: TypeEnv, expr: Expr, fac: &mut TypeVarFactory) -> (TypeSubst, TProof) {
+fn prove_binop(
+  env: TypeEnv,
+  expr: Expr,
+  l: Box<Expr>,
+  r: Box<Expr>,
+  fac: &mut TypeVarFactory,
+  op: Op,
+) -> Result<(TypeSubst, TProof), &'static str> {
+  use self::Op::*;
+  use self::TProofKind::*;
+  use self::Type::{TBool, TInt};
+  let (sl, pl) = prove(env.clone(), *l, fac)?;
+  let (sr, pr) = prove(env.clone(), *r, fac)?;
+  let mut fm: TypeFormula = sl.into();
+  fm.append(&mut sr.into());
+  fm.push(pl.typ.clone(), TInt);
+  fm.push(pr.typ.clone(), TInt);
+  let s = fm.unify()?;
+  Ok((
+    s,
+    TProof {
+      env,
+      expr,
+      typ: match op {
+        Langle => TBool,
+        _ => TInt,
+      },
+      kind: match op {
+        Plus => TPPlus(Box::new(pl), Box::new(pr)),
+        Minus => TPMinus(Box::new(pl), Box::new(pr)),
+        Aster => TPTimes(Box::new(pl), Box::new(pr)),
+        Langle => TPLt(Box::new(pl), Box::new(pr)),
+        _ => panic!("Invalid argument"),
+      },
+    },
+  ))
+
+}
+
+pub fn prove(
+  env: TypeEnv,
+  expr: Expr,
+  fac: &mut TypeVarFactory,
+) -> Result<(TypeSubst, TProof), &'static str> {
   use self::Expr::*;
   use self::TProofKind::*;
   use self::Type::*;
   match expr.clone() {
-    Int(_) => (
+    Int(_) => Ok((
       TypeSubst::new(),
       TProof {
         env,
@@ -346,8 +445,8 @@ pub fn prove(env: TypeEnv, expr: Expr, fac: &mut TypeVarFactory) -> (TypeSubst, 
         typ: TInt,
         kind: TPInt,
       },
-    ),
-    Bool(_) => (
+    )),
+    Bool(_) => Ok((
       TypeSubst::new(),
       TProof {
         env,
@@ -355,7 +454,84 @@ pub fn prove(env: TypeEnv, expr: Expr, fac: &mut TypeVarFactory) -> (TypeSubst, 
         typ: TBool,
         kind: TPBool,
       },
-    ),
+    )),
+    Ident(x) => {
+      let typ = match env.find(&x) {
+        None => {
+          return Err("Undefined variable");
+        }
+        Some(typ) => typ.clone(),
+      };
+      Ok((
+        TypeSubst::new(),
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPVar,
+        },
+      ))
+    }
+    Fun(var, body) => {
+      let alpha = fac.get();
+      let mut next_env = env.clone();
+      next_env.push(var, TVar(alpha.clone()));
+      let (s, p) = prove(next_env, *body, fac)?;
+      let t = s.subst_type(&TVar(alpha));
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ: TFun(Box::new(t), Box::new(p.typ.clone())),
+          kind: TPFun(Box::new(p)),
+        },
+      ))
+    }
+    Plus(l, r) => prove_binop(env, expr, l, r, fac, self::Op::Plus),
+    Minus(l, r) => prove_binop(env, expr, l, r, fac, self::Op::Minus),
+    Times(l, r) => prove_binop(env, expr, l, r, fac, self::Op::Aster),
+    Lt(l, r) => prove_binop(env, expr, l, r, fac, self::Op::Langle),
+    If(p, t, f) => {
+      let (sp, pp) = prove(env.clone(), *p, fac)?;
+      let (st, pt) = prove(env.clone(), *t, fac)?;
+      let (sf, pf) = prove(env.clone(), *f, fac)?;
+      let mut fm: TypeFormula = sp.into();
+      fm.append(&mut st.into());
+      fm.append(&mut sf.into());
+      fm.push(pp.typ.clone(), TBool);
+      fm.push(pt.typ.clone(), pf.typ.clone());
+      let s = fm.unify()?;
+      let typ = s.subst_type(&pt.typ);
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPIf(Box::new(pp), Box::new(pt), Box::new(pf)),
+        },
+      ))
+    }
+    Let(var, def, body) => {
+      let (sdef, pdef) = prove(env.clone(), *def, fac)?;
+      let mut next_env = env.clone();
+      next_env.push(var, pdef.typ.clone());
+      let (sbody, pbody) = prove(next_env, *body, fac)?;
+      let mut fm: TypeFormula = sdef.into();
+      fm.append(&mut sbody.into());
+      let s = fm.unify()?;
+      let typ = s.subst_type(&pbody.typ);
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPLet(Box::new(pdef), Box::new(pbody)),
+        },
+      ))
+    }
     _ => unimplemented!(),
   }
 }

@@ -8,7 +8,7 @@ extern crate combine_language;
 use combine::Parser;
 use std::io::prelude::Read;
 
-fn main() {
+fn main() -> Result<(), &'static str> {
   let mut input = String::new();
   std::io::stdin().read_to_string(&mut input).unwrap();
   let input: &str = &input;
@@ -16,6 +16,8 @@ fn main() {
     .easy_parse(input)
     .unwrap()
     .0;
-  let proof = typingml4::prove(judge.env, judge.expr, &mut typingml4::TypeVarFactory::new());
-  println!("{}", proof.1);
+  let (subst, proof) = typingml4::prove(judge.env, judge.expr, &mut typingml4::TypeVarFactory::new())?;
+  let proof = subst.subst_tproof(proof);
+  println!("{}", proof);
+  Ok(())
 }
