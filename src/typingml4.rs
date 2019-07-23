@@ -532,6 +532,58 @@ pub fn prove(
         },
       ))
     }
+    App(l, r) => {
+      let (sl, pl) = prove(env.clone(), *l, fac)?;
+      let (sr, pr) = prove(env.clone(), *r, fac)?;
+      let alpha = fac.get();
+      let mut fm: TypeFormula = sl.into();
+      fm.append(&mut sr.into());
+      fm.push(
+        pl.typ.clone(),
+        TFun(Box::new(pr.typ.clone()), Box::new(TVar(alpha.clone()))),
+      );
+      let s = fm.unify()?;
+      let typ = s.subst_type(&TVar(alpha));
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPApp(Box::new(pl), Box::new(pr)),
+        },
+      ))
+    }
+    Nil => {
+      let alpha = fac.get();
+      Ok((
+        TypeSubst::new(),
+        TProof {
+          env,
+          expr,
+          typ: TVar(alpha),
+          kind: TPNil,
+        },
+      ))
+    }
+    Cons(l, r) => {
+      let (sl, pl) = prove(env.clone(), *l, fac)?;
+      let (sr, pr) = prove(env.clone(), *r, fac)?;
+      let mut fm: TypeFormula = sl.into();
+      fm.append(&mut sr.into());
+      fm.push(TList(Box::new(pl.typ.clone())), pr.typ.clone());
+      let s = fm.unify()?;
+      let typ = s.subst_type(&pr.typ);
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPCons(Box::new(pl), Box::new(pr)),
+        },
+      ))
+    }
     _ => unimplemented!(),
   }
 }
@@ -576,6 +628,9 @@ impl TProof {
       TPVar => ("T-Var", Vec::new()),
       TPLet(d, b) => ("T-Let", vec![d, b]),
       TPFun(f) => ("T-Fun", vec![f]),
+      TPApp(l, r) => ("T-App", vec![l, r]),
+      TPNil => ("T-Nil", Vec::new()),
+      TPCons(l, r) => ("T-Cons", vec![l, r]),
       _ => unimplemented!(),
     }
   }

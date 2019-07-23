@@ -17,6 +17,9 @@ fn main() -> Result<(), &'static str> {
     .unwrap()
     .0;
   let (subst, proof) = typingml4::prove(judge.env, judge.expr, &mut typingml4::TypeVarFactory::new())?;
+  let mut formula: typingml4::TypeFormula = subst.into();
+  formula.push(judge.typ, proof.typ.clone());
+  let subst = formula.unify()?;
   let proof = subst.subst_tproof(proof);
   println!("{}", proof);
   Ok(())
