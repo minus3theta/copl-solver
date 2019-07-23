@@ -40,7 +40,7 @@ parser! {
   }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub struct TypeVar(usize);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -594,6 +594,31 @@ pub fn prove(
         },
       ))
     }
+    LetRec(x, y, def, body) => {
+      let alpha = fac.get();
+      let beta = fac.get();
+      let mut def_env = env.clone();
+      def_env.push(x.clone(), TVar(alpha));
+      def_env.push(y, TVar(beta));
+      let (sdef, pdef) = prove(def_env, *def, fac)?;
+      let mut body_env = env.clone();
+      body_env.push(x, TVar(alpha));
+      let (sbody, pbody) = prove(body_env, *body, fac)?;
+      let mut fm: TypeFormula = sdef.into();
+      fm.append(&mut sbody.into());
+      fm.push(TVar(alpha), TFun(Box::new(TVar(beta)), Box::new(pdef.typ.clone())));
+      let s = fm.unify()?;
+      let typ = s.subst_type(&pbody.typ);
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPLetRec(Box::new(pdef), Box::new(pbody)),
+        }
+      ))
+    }
     _ => unimplemented!(),
   }
 }
@@ -641,6 +666,7 @@ impl TProof {
       TPApp(l, r) => ("T-App", vec![l, r]),
       TPNil => ("T-Nil", Vec::new()),
       TPCons(l, r) => ("T-Cons", vec![l, r]),
+      TPLetRec(d, b) => ("T-LetRec", vec![d, b]),
       _ => unimplemented!(),
     }
   }
