@@ -11,6 +11,16 @@ pub struct TypeJudgement {
   pub typ: Type,
 }
 
+impl TypeJudgement {
+  pub fn prove(self) -> Result<TProof, &'static str> {
+    let (subst, proof) = prove(self.env, self.expr, &mut TypeVarFactory::new())?;
+    let mut formula: TypeFormula = subst.into();
+    formula.push(self.typ, proof.typ.clone());
+    let subst = formula.unify()?;
+    Ok(subst.subst_tproof(proof))
+  }
+}
+
 parser! {
   pub fn judgement_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> TypeJudgement
   where [
