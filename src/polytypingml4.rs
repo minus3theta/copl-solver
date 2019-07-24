@@ -2,7 +2,7 @@ use combine::parser::char::{lower, spaces};
 use combine::{attempt, many, optional, parser, sep_by, token, ParseError, Stream};
 use combine_language::LanguageEnv;
 use expr::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
@@ -14,11 +14,12 @@ pub struct TypeJudgement {
 
 impl TypeJudgement {
   pub fn prove(self) -> Result<TProof, &'static str> {
-    let (subst, proof) = prove(self.env, self.expr, &mut TypeVarFactory::new())?;
+    let mut fac = TypeVarFactory::new();
+    let (subst, proof) = prove(self.env, self.expr, &mut fac)?;
     let mut formula: TypeFormula = subst.into();
     formula.push(self.typ, proof.typ.clone());
     let subst = formula.unify()?;
-    Ok(subst.subst_tproof(proof))
+    Ok(subst.subst_tproof(proof, &mut fac))
   }
 }
 
@@ -79,10 +80,20 @@ impl Type {
       TList(t) => t.is_free(v),
     }
   }
+  pub fn ftv(&self) -> HashSet<TypeVar> {
+    use self::Type::*;
+    match self {
+      TVar(x) => [*x].iter().cloned().collect(),
+      TBool | TInt => HashSet::new(),
+      TFun(l, r) => l.ftv().union(&r.ftv()).cloned().collect(),
+      TList(l) => l.ftv(),
+    }
+  }
+  pub fn closure(self, env: &TypeEnv) -> TypeScheme {
+    let scheme = self.ftv().into_iter().filter(|v| !env.is_free(v)).collect();
+    TypeScheme { scheme, typ: self }
+  }
 }
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub struct TypeEnv(Vec<(String, Type)>);
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub struct TypeScheme {
@@ -90,15 +101,33 @@ pub struct TypeScheme {
   pub typ: Type,
 }
 
+impl TypeScheme {
+  pub fn simple(typ: Type) -> Self {
+    Self {
+      scheme: Vec::new(),
+      typ,
+    }
+  }
+  pub fn is_free(&self, v: &TypeVar) -> bool {
+    self.typ.is_free(v) && self.scheme.iter().find(|&x| x == v).is_none()
+  }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+pub struct TypeEnv(Vec<(String, TypeScheme)>);
+
 impl TypeEnv {
   pub fn new() -> Self {
     Self(Vec::new())
   }
-  pub fn push(&mut self, var: String, typ: Type) {
+  pub fn push(&mut self, var: String, typ: TypeScheme) {
     self.0.push((var, typ));
   }
-  pub fn find<'a>(&'a self, var: &String) -> Option<&'a Type> {
+  pub fn find<'a>(&'a self, var: &String) -> Option<&'a TypeScheme> {
     self.0.iter().find(|(v, _)| v == var).map(|(_, t)| t)
+  }
+  pub fn is_free(&self, v: &TypeVar) -> bool {
+    self.0.iter().any(|(_, t)| t.is_free(v))
   }
 }
 
@@ -131,12 +160,24 @@ impl TypeSubst {
       TList(x) => TList(Box::new(self.subst_type(x.as_ref()))),
     }
   }
-  pub fn subst_type_env(&self, env: TypeEnv) -> TypeEnv {
+  pub fn subst_type_scheme(&self, ts: &TypeScheme, fac: &mut TypeVarFactory) -> TypeScheme {
+    let mut pre_subst = TypeSubst::new();
+    let mut vs = Vec::new();
+    for v in &ts.scheme {
+      let new_var = fac.get();
+      pre_subst.push(Type::TVar(new_var), *v);
+      vs.push(new_var);
+    }
+    let pre_typ = pre_subst.subst_type(&ts.typ);
+    let typ = self.subst_type(&pre_typ);
+    TypeScheme { scheme: vs, typ }
+  }
+  pub fn subst_type_env(&self, env: TypeEnv, fac: &mut TypeVarFactory) -> TypeEnv {
     TypeEnv(
       env
         .0
         .into_iter()
-        .map(|(x, t)| (x, self.subst_type(&t)))
+        .map(|(x, t)| (x, self.subst_type_scheme(&t, fac)))
         .collect(),
     )
   }
@@ -148,10 +189,10 @@ impl TypeSubst {
         .collect(),
     )
   }
-  pub fn subst_tproof_box(&self, proof: Box<TProof>) -> Box<TProof> {
-    Box::new(self.subst_tproof(*proof))
+  pub fn subst_tproof_box(&self, proof: Box<TProof>, fac: &mut TypeVarFactory) -> Box<TProof> {
+    Box::new(self.subst_tproof(*proof, fac))
   }
-  pub fn subst_tproof(&self, proof: TProof) -> TProof {
+  pub fn subst_tproof(&self, proof: TProof, fac: &mut TypeVarFactory) -> TProof {
     use self::TProofKind::*;
     let TProof {
       env,
@@ -160,28 +201,28 @@ impl TypeSubst {
       kind,
     } = proof;
     TProof {
-      env: self.subst_type_env(env),
+      env: self.subst_type_env(env, fac),
       expr,
       typ: self.subst_type(&typ),
       kind: match kind {
         TPIf(p, t, f) => TPIf(
-          self.subst_tproof_box(p),
-          self.subst_tproof_box(t),
-          self.subst_tproof_box(f),
+          self.subst_tproof_box(p, fac),
+          self.subst_tproof_box(t, fac),
+          self.subst_tproof_box(f, fac),
         ),
-        TPPlus(l, r) => TPPlus(self.subst_tproof_box(l), self.subst_tproof_box(r)),
-        TPMinus(l, r) => TPMinus(self.subst_tproof_box(l), self.subst_tproof_box(r)),
-        TPTimes(l, r) => TPTimes(self.subst_tproof_box(l), self.subst_tproof_box(r)),
-        TPLt(l, r) => TPLt(self.subst_tproof_box(l), self.subst_tproof_box(r)),
-        TPLet(l, r) => TPLet(self.subst_tproof_box(l), self.subst_tproof_box(r)),
-        TPFun(e) => TPFun(self.subst_tproof_box(e)),
-        TPApp(l, r) => TPApp(self.subst_tproof_box(l), self.subst_tproof_box(r)),
-        TPLetRec(l, r) => TPLetRec(self.subst_tproof_box(l), self.subst_tproof_box(r)),
-        TPCons(l, r) => TPCons(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPPlus(l, r) => TPPlus(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPMinus(l, r) => TPMinus(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPTimes(l, r) => TPTimes(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPLt(l, r) => TPLt(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPLet(l, r) => TPLet(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPFun(e) => TPFun(self.subst_tproof_box(e, fac)),
+        TPApp(l, r) => TPApp(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPLetRec(l, r) => TPLetRec(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPCons(l, r) => TPCons(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
         TPMatch(e1, e2, e3) => TPMatch(
-          self.subst_tproof_box(e1),
-          self.subst_tproof_box(e2),
-          self.subst_tproof_box(e3),
+          self.subst_tproof_box(e1, fac),
+          self.subst_tproof_box(e2, fac),
+          self.subst_tproof_box(e3, fac),
         ),
         k => k,
       },
@@ -274,7 +315,7 @@ parser! {
     choice!(
       expr_env.reserved("bool").map(|_| Type::TBool),
       expr_env.reserved("int").map(|_| Type::TInt),
-      typevar_parser().map(Type::TVar),
+      typevar_parser().map(Type::TVar).skip(spaces()),
       expr_env.parens(type_parser(calc_expr_env()))
     )
   }
@@ -337,7 +378,7 @@ parser! {
 }
 
 parser! {
-  pub fn type_env_pair_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> (String, Type)
+  pub fn type_env_pair_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> (String, TypeScheme)
   where [
     I: Stream<Item = char>,
     I::Error: ParseError<char, I::Range, I::Position>,
@@ -347,7 +388,7 @@ parser! {
   {
     (
       expr_env.identifier(),
-      expr_env.reserved(":").with(type_parser(calc_expr_env()))
+      expr_env.reserved(":").with(typescheme_parser(calc_expr_env()))
     )
   }
 }
@@ -379,6 +420,27 @@ impl fmt::Display for Type {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     use self::Type::*;
     match self {
+      TVar(v) => write!(f, "{}", v),
+      TBool => write!(f, "bool"),
+      TInt => write!(f, "int"),
+      TFun(l, r) => write!(f, "({} -> {})", l, r),
+      TList(t) => write!(f, "{} list", t),
+    }
+  }
+}
+
+impl fmt::Display for TypeScheme {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    use self::Type::*;
+    let n = self.scheme.len();
+    for (i, v) in self.scheme.iter().enumerate() {
+      if i == n - 1 {
+        write!(f, "{}.", v)?;
+      } else {
+        write!(f, "{} ", v)?;
+      }
+    }
+    match &self.typ {
       TVar(v) => write!(f, "{}", v),
       TBool => write!(f, "bool"),
       TInt => write!(f, "int"),
@@ -497,14 +559,15 @@ pub fn prove(
       },
     )),
     Ident(x) => {
+      let s = TypeSubst::new();
       let typ = match env.find(&x) {
         None => {
           return Err("Undefined variable");
         }
-        Some(typ) => typ.clone(),
+        Some(ref ts) => s.subst_type_scheme(ts, fac).typ,
       };
       Ok((
-        TypeSubst::new(),
+        s,
         TProof {
           env,
           expr,
@@ -516,7 +579,7 @@ pub fn prove(
     Fun(var, body) => {
       let alpha = fac.get();
       let mut next_env = env.clone();
-      next_env.push(var, TVar(alpha.clone()));
+      next_env.push(var, TypeScheme::simple(TVar(alpha.clone())));
       let (s, p) = prove(next_env, *body, fac)?;
       let t = s.subst_type(&TVar(alpha));
       Ok((
@@ -556,8 +619,12 @@ pub fn prove(
     }
     Let(var, def, body) => {
       let (sdef, pdef) = prove(env.clone(), *def, fac)?;
+      let ts = pdef
+        .typ
+        .clone()
+        .closure(&sdef.subst_type_env(env.clone(), fac));
       let mut next_env = env.clone();
-      next_env.push(var, pdef.typ.clone());
+      next_env.push(var, ts);
       let (sbody, pbody) = prove(next_env, *body, fac)?;
       let mut fm: TypeFormula = sdef.into();
       fm.append(&mut sbody.into());
@@ -625,59 +692,60 @@ pub fn prove(
         },
       ))
     }
-    LetRec(x, y, def, body) => {
-      let alpha = fac.get();
-      let beta = fac.get();
-      let mut def_env = env.clone();
-      def_env.push(x.clone(), TVar(alpha));
-      def_env.push(y, TVar(beta));
-      let (sdef, pdef) = prove(def_env, *def, fac)?;
-      let mut body_env = env.clone();
-      body_env.push(x, TVar(alpha));
-      let (sbody, pbody) = prove(body_env, *body, fac)?;
-      let mut fm: TypeFormula = sdef.into();
-      fm.append(&mut sbody.into());
-      fm.push(
-        TVar(alpha),
-        TFun(Box::new(TVar(beta)), Box::new(pdef.typ.clone())),
-      );
-      let s = fm.unify()?;
-      let typ = s.subst_type(&pbody.typ);
-      Ok((
-        s,
-        TProof {
-          env,
-          expr,
-          typ,
-          kind: TPLetRec(Box::new(pdef), Box::new(pbody)),
-        },
-      ))
-    }
-    Match2(target, bnil, vcar, vcdr, bcons) => {
-      let (starget, ptarget) = prove(env.clone(), *target, fac)?;
-      let (snil, pnil) = prove(env.clone(), *bnil, fac)?;
-      let alpha = fac.get();
-      let mut cons_env = env.clone();
-      cons_env.push(vcar, TVar(alpha));
-      cons_env.push(vcdr, TList(Box::new(TVar(alpha))));
-      let (scons, pcons) = prove(cons_env, *bcons, fac)?;
-      let mut fm: TypeFormula = starget.into();
-      fm.append(&mut snil.into());
-      fm.append(&mut scons.into());
-      fm.push(ptarget.typ.clone(), TList(Box::new(TVar(alpha))));
-      fm.push(pnil.typ.clone(), pcons.typ.clone());
-      let s = fm.unify()?;
-      let typ = s.subst_type(&pnil.typ);
-      Ok((
-        s,
-        TProof {
-          env,
-          expr,
-          typ,
-          kind: TPMatch(Box::new(ptarget), Box::new(pnil), Box::new(pcons)),
-        },
-      ))
-    }
+    // LetRec(x, y, def, body) => {
+    //   let alpha = fac.get();
+    //   let beta = fac.get();
+    //   let mut def_env = env.clone();
+    //   def_env.push(x.clone(), TVar(alpha));
+    //   def_env.push(y, TVar(beta));
+    //   let (sdef, pdef) = prove(def_env, *def, fac)?;
+    //   let mut body_env = env.clone();
+    //   body_env.push(x, TVar(alpha));
+    //   let (sbody, pbody) = prove(body_env, *body, fac)?;
+    //   let mut fm: TypeFormula = sdef.into();
+    //   fm.append(&mut sbody.into());
+    //   fm.push(
+    //     TVar(alpha),
+    //     TFun(Box::new(TVar(beta)), Box::new(pdef.typ.clone())),
+    //   );
+    //   let s = fm.unify()?;
+    //   let typ = s.subst_type(&pbody.typ);
+    //   Ok((
+    //     s,
+    //     TProof {
+    //       env,
+    //       expr,
+    //       typ,
+    //       kind: TPLetRec(Box::new(pdef), Box::new(pbody)),
+    //     },
+    //   ))
+    // }
+    // Match2(target, bnil, vcar, vcdr, bcons) => {
+    //   let (starget, ptarget) = prove(env.clone(), *target, fac)?;
+    //   let (snil, pnil) = prove(env.clone(), *bnil, fac)?;
+    //   let alpha = fac.get();
+    //   let mut cons_env = env.clone();
+    //   cons_env.push(vcar, TVar(alpha));
+    //   cons_env.push(vcdr, TList(Box::new(TVar(alpha))));
+    //   let (scons, pcons) = prove(cons_env, *bcons, fac)?;
+    //   let mut fm: TypeFormula = starget.into();
+    //   fm.append(&mut snil.into());
+    //   fm.append(&mut scons.into());
+    //   fm.push(ptarget.typ.clone(), TList(Box::new(TVar(alpha))));
+    //   fm.push(pnil.typ.clone(), pcons.typ.clone());
+    //   let s = fm.unify()?;
+    //   let typ = s.subst_type(&pnil.typ);
+    //   Ok((
+    //     s,
+    //     TProof {
+    //       env,
+    //       expr,
+    //       typ,
+    //       kind: TPMatch(Box::new(ptarget), Box::new(pnil), Box::new(pcons)),
+    //     },
+    //   ))
+    // }
+    _ => unimplemented!(),
   }
 }
 
