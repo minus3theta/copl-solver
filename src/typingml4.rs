@@ -606,7 +606,10 @@ pub fn prove(
       let (sbody, pbody) = prove(body_env, *body, fac)?;
       let mut fm: TypeFormula = sdef.into();
       fm.append(&mut sbody.into());
-      fm.push(TVar(alpha), TFun(Box::new(TVar(beta)), Box::new(pdef.typ.clone())));
+      fm.push(
+        TVar(alpha),
+        TFun(Box::new(TVar(beta)), Box::new(pdef.typ.clone())),
+      );
       let s = fm.unify()?;
       let typ = s.subst_type(&pbody.typ);
       Ok((
@@ -616,10 +619,34 @@ pub fn prove(
           expr,
           typ,
           kind: TPLetRec(Box::new(pdef), Box::new(pbody)),
+        },
+      ))
+    }
+    Match2(target, bnil, vcar, vcdr, bcons) => {
+      let (starget, ptarget) = prove(env.clone(), *target, fac)?;
+      let (snil, pnil) = prove(env.clone(), *bnil, fac)?;
+      let alpha = fac.get();
+      let mut cons_env = env.clone();
+      cons_env.push(vcar, TVar(alpha));
+      cons_env.push(vcdr, TList(Box::new(TVar(alpha))));
+      let (scons, pcons) = prove(cons_env, *bcons, fac)?;
+      let mut fm: TypeFormula = starget.into();
+      fm.append(&mut snil.into());
+      fm.append(&mut scons.into());
+      fm.push(ptarget.typ.clone(), TList(Box::new(TVar(alpha))));
+      fm.push(pnil.typ.clone(), pcons.typ.clone());
+      let s = fm.unify()?;
+      let typ = s.subst_type(&pnil.typ);
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPMatch(Box::new(ptarget), Box::new(pnil), Box::new(pcons)),
         }
       ))
     }
-    _ => unimplemented!(),
   }
 }
 
@@ -667,7 +694,7 @@ impl TProof {
       TPNil => ("T-Nil", Vec::new()),
       TPCons(l, r) => ("T-Cons", vec![l, r]),
       TPLetRec(d, b) => ("T-LetRec", vec![d, b]),
-      _ => unimplemented!(),
+      TPMatch(t, n, c) => ("T-Match", vec![t, n, c]),
     }
   }
 }
