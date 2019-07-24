@@ -109,7 +109,7 @@ impl TypeScheme {
     }
   }
   pub fn is_free(&self, v: &TypeVar) -> bool {
-    self.typ.is_free(v) && self.scheme.iter().find(|&x| x == v).is_none()
+    self.typ.is_free(v) && self.scheme.iter().all(|x| x != v)
   }
 }
 
@@ -124,7 +124,7 @@ impl TypeEnv {
     self.0.push((var, typ));
   }
   pub fn find<'a>(&'a self, var: &String) -> Option<&'a TypeScheme> {
-    self.0.iter().find(|(v, _)| v == var).map(|(_, t)| t)
+    self.0.iter().rev().find(|(v, _)| v == var).map(|(_, t)| t)
   }
   pub fn is_free(&self, v: &TypeVar) -> bool {
     self.0.iter().any(|(_, t)| t.is_free(v))
