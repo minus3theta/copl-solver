@@ -1,5 +1,5 @@
-use combine::parser::char::lower;
-use combine::{many, optional, parser, sep_by, token, ParseError, Stream};
+use combine::parser::char::{lower, spaces};
+use combine::{attempt, many, optional, parser, sep_by, token, ParseError, Stream};
 use combine_language::LanguageEnv;
 use expr::*;
 use std::collections::HashMap;
@@ -250,6 +250,19 @@ impl TypeFormula {
 }
 
 parser! {
+  pub fn typevar_parser[I]()(I) -> TypeVar
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    token('\'').with(lower()).map(|c| TypeVar(c as usize - 'a' as usize))
+  }
+}
+
+parser! {
   pub fn type_atom_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Type
   where [
     I: Stream<Item = char>,
@@ -261,7 +274,7 @@ parser! {
     choice!(
       expr_env.reserved("bool").map(|_| Type::TBool),
       expr_env.reserved("int").map(|_| Type::TInt),
-      token('\'').with(lower()).map(|c| Type::TVar(TypeVar(c as usize - 'a' as usize))),
+      typevar_parser().map(Type::TVar),
       expr_env.parens(type_parser(calc_expr_env()))
     )
   }
@@ -304,6 +317,22 @@ parser! {
       None => l,
       Some(r) => Type::TFun(Box::new(l), Box::new(r)),
     })
+  }
+}
+
+parser! {
+  pub fn typescheme_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> TypeScheme
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (
+      optional(attempt(sep_by(typevar_parser(), spaces()).skip(expr_env.reserved(".")))),
+      type_parser(calc_expr_env())
+    ).map(|(v, t)| TypeScheme { scheme: v.unwrap_or(Vec::new()), typ: t })
   }
 }
 
@@ -790,11 +819,42 @@ mod test {
     )
   }
   #[test]
-  fn parse_type_var() {
+  fn parse_typevar() {
     let s = "'a";
     assert_eq!(
       type_parser(calc_expr_env()).easy_parse(s),
       Ok((TVar(TypeVar(0)), ""))
+    )
+  }
+  #[test]
+  fn parse_typescheme() {
+    let s = "'a 'b 'c.'a";
+    assert_eq!(
+      typescheme_parser(calc_expr_env()).easy_parse(s),
+      Ok((
+        TypeScheme {
+          scheme: vec![TypeVar(0), TypeVar(1), TypeVar(2)],
+          typ: TVar(TypeVar(0)),
+        },
+        ""
+      ))
+    )
+  }
+  #[test]
+  fn parse_typescheme_fun() {
+    let s = "int list -> bool list";
+    assert_eq!(
+      typescheme_parser(calc_expr_env()).easy_parse(s),
+      Ok((
+        TypeScheme {
+          scheme: Vec::new(),
+          typ: TFun(
+            Box::new(TList(Box::new(TInt))),
+            Box::new(TList(Box::new(TBool)))
+          ),
+        },
+        ""
+      ))
     )
   }
 }
