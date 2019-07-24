@@ -19,7 +19,7 @@ impl TypeJudgement {
     let mut formula: TypeFormula = subst.into();
     formula.push(self.typ, proof.typ.clone());
     let subst = formula.unify()?;
-    Ok(subst.subst_tproof(proof, &mut fac))
+    Ok(subst.subst_tproof(proof))
   }
 }
 
@@ -172,12 +172,26 @@ impl TypeSubst {
     let typ = self.subst_type(&pre_typ);
     TypeScheme { scheme: vs, typ }
   }
+  pub fn subst_type_scheme_simple(&self, ts: &TypeScheme) -> TypeScheme {
+    let subst = TypeSubst(self.0.clone().into_iter().filter(|(tv, _)| ts.is_free(tv)).collect());
+    let typ = subst.subst_type(&ts.typ);
+    TypeScheme { scheme: ts.scheme.clone(), typ }
+  }
   pub fn subst_type_env(&self, env: TypeEnv, fac: &mut TypeVarFactory) -> TypeEnv {
     TypeEnv(
       env
         .0
         .into_iter()
         .map(|(x, t)| (x, self.subst_type_scheme(&t, fac)))
+        .collect(),
+    )
+  }
+  pub fn subst_type_env_simple(&self, env: TypeEnv) -> TypeEnv {
+    TypeEnv(
+      env
+        .0
+        .into_iter()
+        .map(|(x, t)| (x, self.subst_type_scheme_simple(&t)))
         .collect(),
     )
   }
@@ -189,10 +203,10 @@ impl TypeSubst {
         .collect(),
     )
   }
-  pub fn subst_tproof_box(&self, proof: Box<TProof>, fac: &mut TypeVarFactory) -> Box<TProof> {
-    Box::new(self.subst_tproof(*proof, fac))
+  pub fn subst_tproof_box(&self, proof: Box<TProof>) -> Box<TProof> {
+    Box::new(self.subst_tproof(*proof))
   }
-  pub fn subst_tproof(&self, proof: TProof, fac: &mut TypeVarFactory) -> TProof {
+  pub fn subst_tproof(&self, proof: TProof) -> TProof {
     use self::TProofKind::*;
     let TProof {
       env,
@@ -201,28 +215,28 @@ impl TypeSubst {
       kind,
     } = proof;
     TProof {
-      env: self.subst_type_env(env, fac),
+      env: self.subst_type_env_simple(env),
       expr,
       typ: self.subst_type(&typ),
       kind: match kind {
         TPIf(p, t, f) => TPIf(
-          self.subst_tproof_box(p, fac),
-          self.subst_tproof_box(t, fac),
-          self.subst_tproof_box(f, fac),
+          self.subst_tproof_box(p),
+          self.subst_tproof_box(t),
+          self.subst_tproof_box(f),
         ),
-        TPPlus(l, r) => TPPlus(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
-        TPMinus(l, r) => TPMinus(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
-        TPTimes(l, r) => TPTimes(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
-        TPLt(l, r) => TPLt(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
-        TPLet(l, r) => TPLet(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
-        TPFun(e) => TPFun(self.subst_tproof_box(e, fac)),
-        TPApp(l, r) => TPApp(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
-        TPLetRec(l, r) => TPLetRec(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
-        TPCons(l, r) => TPCons(self.subst_tproof_box(l, fac), self.subst_tproof_box(r, fac)),
+        TPPlus(l, r) => TPPlus(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPMinus(l, r) => TPMinus(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPTimes(l, r) => TPTimes(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPLt(l, r) => TPLt(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPLet(l, r) => TPLet(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPFun(e) => TPFun(self.subst_tproof_box(e)),
+        TPApp(l, r) => TPApp(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPLetRec(l, r) => TPLetRec(self.subst_tproof_box(l), self.subst_tproof_box(r)),
+        TPCons(l, r) => TPCons(self.subst_tproof_box(l), self.subst_tproof_box(r)),
         TPMatch(e1, e2, e3) => TPMatch(
-          self.subst_tproof_box(e1, fac),
-          self.subst_tproof_box(e2, fac),
-          self.subst_tproof_box(e3, fac),
+          self.subst_tproof_box(e1),
+          self.subst_tproof_box(e2),
+          self.subst_tproof_box(e3),
         ),
         k => k,
       },
