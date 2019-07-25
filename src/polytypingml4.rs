@@ -739,34 +739,40 @@ pub fn prove(
         },
       ))
     }
-    // LetRec(x, y, def, body) => {
-    //   let alpha = fac.get();
-    //   let beta = fac.get();
-    //   let mut def_env = env.clone();
-    //   def_env.push(x.clone(), TVar(alpha));
-    //   def_env.push(y, TVar(beta));
-    //   let (sdef, pdef) = prove(def_env, *def, fac)?;
-    //   let mut body_env = env.clone();
-    //   body_env.push(x, TVar(alpha));
-    //   let (sbody, pbody) = prove(body_env, *body, fac)?;
-    //   let mut fm: TypeFormula = sdef.into();
-    //   fm.append(&mut sbody.into());
-    //   fm.push(
-    //     TVar(alpha),
-    //     TFun(Box::new(TVar(beta)), Box::new(pdef.typ.clone())),
-    //   );
-    //   let s = fm.unify()?;
-    //   let typ = s.subst_type(&pbody.typ);
-    //   Ok((
-    //     s,
-    //     TProof {
-    //       env,
-    //       expr,
-    //       typ,
-    //       kind: TPLetRec(Box::new(pdef), Box::new(pbody)),
-    //     },
-    //   ))
-    // }
+    LetRec(x, y, def, body) => {
+      let alpha = fac.get();
+      let beta = fac.get();
+      let mut def_env = env.clone();
+      def_env.push(x.clone(), TypeScheme::simple(TVar(alpha)));
+      def_env.push(y, TypeScheme::simple(TVar(beta)));
+      let (sdef, pdef) = prove(def_env, *def, fac)?;
+      let mut fm: TypeFormula = sdef.into();
+      fm.push(
+        TVar(alpha),
+        TFun(Box::new(TVar(beta)), Box::new(pdef.typ.clone())),
+      );
+      let s = fm.unify()?;
+      let ts = s
+        .subst_type(&TVar(alpha))
+        .closure(&s.subst_type_env(env.clone(), fac));
+
+      let mut body_env = env.clone();
+      body_env.push(x, ts);
+      let (sbody, pbody) = prove(body_env, *body, fac)?;
+      let mut fm: TypeFormula = s.into();
+      fm.append(&mut sbody.into());
+      let s = fm.unify()?;
+      let typ = s.subst_type(&pbody.typ);
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPLetRec(Box::new(pdef), Box::new(pbody)),
+        },
+      ))
+    }
     Match2(target, bnil, vcar, vcdr, bcons) => {
       let (starget, ptarget) = prove(env.clone(), *target, fac)?;
       let (snil, pnil) = prove(env.clone(), *bnil, fac)?;
@@ -792,7 +798,6 @@ pub fn prove(
         },
       ))
     }
-    _ => unimplemented!(),
   }
 }
 
