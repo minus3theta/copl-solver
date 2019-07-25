@@ -14,7 +14,8 @@ pub struct TypeJudgement {
 
 impl TypeJudgement {
   pub fn prove(self) -> Result<TProof, &'static str> {
-    let mut fac = TypeVarFactory::new();
+    let used_tv = self.typ.ftv().iter().map(|v| v.0).max().map(|x| x + 1);
+    let mut fac = TypeVarFactory::new(used_tv.unwrap_or(0));
     let (subst, proof) = prove(self.env, self.expr, &mut fac)?;
     let mut formula: TypeFormula = subst.into();
     formula.push(self.typ, proof.typ.clone());
@@ -51,8 +52,8 @@ pub struct TypeVarFactory {
 }
 
 impl TypeVarFactory {
-  pub fn new() -> Self {
-    Self { current: 0 }
+  pub fn new(start: usize) -> Self {
+    Self { current: start }
   }
   pub fn get(&mut self) -> TypeVar {
     let ret = TypeVar(self.current);
@@ -552,7 +553,6 @@ fn prove_binop(
       },
     },
   ))
-
 }
 
 pub fn prove(
