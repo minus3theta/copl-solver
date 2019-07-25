@@ -767,31 +767,31 @@ pub fn prove(
     //     },
     //   ))
     // }
-    // Match2(target, bnil, vcar, vcdr, bcons) => {
-    //   let (starget, ptarget) = prove(env.clone(), *target, fac)?;
-    //   let (snil, pnil) = prove(env.clone(), *bnil, fac)?;
-    //   let alpha = fac.get();
-    //   let mut cons_env = env.clone();
-    //   cons_env.push(vcar, TVar(alpha));
-    //   cons_env.push(vcdr, TList(Box::new(TVar(alpha))));
-    //   let (scons, pcons) = prove(cons_env, *bcons, fac)?;
-    //   let mut fm: TypeFormula = starget.into();
-    //   fm.append(&mut snil.into());
-    //   fm.append(&mut scons.into());
-    //   fm.push(ptarget.typ.clone(), TList(Box::new(TVar(alpha))));
-    //   fm.push(pnil.typ.clone(), pcons.typ.clone());
-    //   let s = fm.unify()?;
-    //   let typ = s.subst_type(&pnil.typ);
-    //   Ok((
-    //     s,
-    //     TProof {
-    //       env,
-    //       expr,
-    //       typ,
-    //       kind: TPMatch(Box::new(ptarget), Box::new(pnil), Box::new(pcons)),
-    //     },
-    //   ))
-    // }
+    Match2(target, bnil, vcar, vcdr, bcons) => {
+      let (starget, ptarget) = prove(env.clone(), *target, fac)?;
+      let (snil, pnil) = prove(env.clone(), *bnil, fac)?;
+      let alpha = fac.get();
+      let mut cons_env = env.clone();
+      cons_env.push(vcar, TypeScheme::simple(TVar(alpha)));
+      cons_env.push(vcdr, TypeScheme::simple(TList(Box::new(TVar(alpha)))));
+      let (scons, pcons) = prove(cons_env, *bcons, fac)?;
+      let mut fm: TypeFormula = starget.into();
+      fm.append(&mut snil.into());
+      fm.append(&mut scons.into());
+      fm.push(ptarget.typ.clone(), TList(Box::new(TVar(alpha))));
+      fm.push(pnil.typ.clone(), pcons.typ.clone());
+      let s = fm.unify()?;
+      let typ = s.subst_type(&pnil.typ);
+      Ok((
+        s,
+        TProof {
+          env,
+          expr,
+          typ,
+          kind: TPMatch(Box::new(ptarget), Box::new(pnil), Box::new(pcons)),
+        },
+      ))
+    }
     _ => unimplemented!(),
   }
 }
