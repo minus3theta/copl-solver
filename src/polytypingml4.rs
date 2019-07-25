@@ -173,9 +173,19 @@ impl TypeSubst {
     TypeScheme { scheme: vs, typ }
   }
   pub fn subst_type_scheme_simple(&self, ts: &TypeScheme) -> TypeScheme {
-    let subst = TypeSubst(self.0.clone().into_iter().filter(|(tv, _)| ts.is_free(tv)).collect());
+    let subst = TypeSubst(
+      self
+        .0
+        .clone()
+        .into_iter()
+        .filter(|(tv, _)| ts.is_free(tv))
+        .collect(),
+    );
     let typ = subst.subst_type(&ts.typ);
-    TypeScheme { scheme: ts.scheme.clone(), typ }
+    TypeScheme {
+      scheme: ts.scheme.clone(),
+      typ,
+    }
   }
   pub fn subst_type_env(&self, env: TypeEnv, fac: &mut TypeVarFactory) -> TypeEnv {
     TypeEnv(
@@ -683,7 +693,7 @@ pub fn prove(
         TProof {
           env,
           expr,
-          typ: TVar(alpha),
+          typ: TList(Box::new(TVar(alpha))),
           kind: TPNil,
         },
       ))
