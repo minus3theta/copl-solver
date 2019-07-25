@@ -836,7 +836,7 @@ impl TProof {
       TPIf(p, t, f) => ("T-If", vec![p, t, f]),
       TPPlus(l, r) => ("T-Plus", vec![l, r]),
       TPMinus(l, r) => ("T-Minus", vec![l, r]),
-      TPTimes(l, r) => ("T-Times", vec![l, r]),
+      TPTimes(l, r) => ("T-Mult", vec![l, r]),
       TPLt(l, r) => ("T-Lt", vec![l, r]),
       TPVar => ("T-Var", Vec::new()),
       TPLet(d, b) => ("T-Let", vec![d, b]),
