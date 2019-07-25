@@ -25,7 +25,7 @@ impl TypeJudgement {
     let mut fac = TypeVarFactory::new(used_tv.unwrap_or(0));
     let (subst, proof) = prove(self.env, self.expr, &mut fac)?;
     let mut formula: TypeFormula = subst.into();
-    formula.push(self.typ, proof.typ.clone());
+    formula.push(proof.typ.clone(), self.typ);
     let subst = formula.unify()?;
     Ok(subst.subst_tproof(proof))
   }
