@@ -21,6 +21,9 @@ pub enum Expr {
   Nil,
   Cons(Box<Expr>, Box<Expr>),
   Match(Box<Expr>, Box<Clause>),
+  Ref(Box<Expr>),
+  Deref(Box<Expr>),
+  Assign(Box<Expr>, Box<Expr>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -30,6 +33,7 @@ pub enum Op {
   Aster,
   Cons,
   Langle,
+  ColEq,
 }
 
 pub fn calc_expr_env<'a, I>() -> LanguageEnv<'a, I>
@@ -48,16 +52,16 @@ where
       rest: alpha_num().or(token('\'')),
       reserved: [
         "true", "false", "if", "then", "else", "let", "rec", "in", "fun", "match", "with",
-        "evalto", "[]", "->", "|-", "|", "_",
+        "evalto", "[]", "->", "|-", "|", "_", "=", ",", "ref", "/",
       ]
       .iter()
       .map(|x| (*x).into())
       .collect(),
     },
     op: Identifier {
-      start: satisfy(|c| "+-*<:".chars().any(|x| x == c)),
-      rest: satisfy(|c| "+-*<:".chars().any(|x| x == c)),
-      reserved: ["+", "-", "*", "<", "::"]
+      start: satisfy(|c| "+-*<:=".chars().any(|x| x == c)),
+      rest: satisfy(|c| "+-*<:=".chars().any(|x| x == c)),
+      reserved: ["+", "-", "*", "<", "::", ":="]
         .iter()
         .map(|x| (*x).into())
         .collect(),
@@ -180,6 +184,8 @@ parser! {
           Some(_) => -x,
         })
       ),
+      expr_env.reserved("ref").with(term_parser(calc_expr_env())).map(|e| Expr::Ref(Box::new(e))),
+      token('!').with(spaces()).with(term_parser(calc_expr_env())).map(|e| Expr::Deref(Box::new(e))),
       expr_env.identifier().map(Expr::Ident),
       expr_env.parens(expr_parser())
     )
@@ -263,7 +269,8 @@ parser! {
       expr_env.reserved_op("-").map(|_| (Op::Minus, Assoc { precedence: 6, fixity: Fixity::Left})),
       expr_env.reserved_op("*").map(|_| (Op::Aster, Assoc { precedence: 7, fixity: Fixity::Left})),
       expr_env.reserved_op("<").map(|_| (Op::Langle, Assoc { precedence: 4, fixity: Fixity::Left})),
-      expr_env.reserved_op("::").map(|_| (Op::Cons, Assoc { precedence: 5, fixity: Fixity::Right}))
+      expr_env.reserved_op("::").map(|_| (Op::Cons, Assoc { precedence: 5, fixity: Fixity::Right})),
+      expr_env.reserved_op(":=").map(|_| (Op::ColEq, Assoc { precedence: 3, fixity: Fixity::Right}))
     )
   }
 }
@@ -276,6 +283,7 @@ fn op(l: Expr, o: Op, r: Expr) -> Expr {
     Op::Aster => Times(Box::new(l), Box::new(r)),
     Op::Cons => Cons(Box::new(l), Box::new(r)),
     Op::Langle => Lt(Box::new(l), Box::new(r)),
+    Op::ColEq => Assign(Box::new(l), Box::new(r)),
   }
 }
 
@@ -320,6 +328,106 @@ pub fn fun(var: String, body: Expr) -> Expr {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub struct Loc {
+  pub name: String,
+}
+
+impl fmt::Display for Loc {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "@{}", self.name)
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StorePair {
+  pub loc: Loc,
+  pub value: Value,
+}
+
+pub fn store_pair(name: String, value: Value) -> StorePair {
+  StorePair {
+    loc: Loc { name },
+    value,
+  }
+}
+
+impl fmt::Display for StorePair {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{} = {}", self.loc, self.value)
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct Store(Vec<StorePair>);
+
+pub fn store(sp: Vec<StorePair>) -> Store {
+  Store(sp)
+}
+
+impl Store {
+  pub fn new() -> Store {
+    Store(Vec::new())
+  }
+}
+
+impl fmt::Display for Store {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    let st = &self.0;
+    for (i, sp) in st.iter().enumerate() {
+      write!(f, "{}", sp)?;
+      if i < st.len() - 1 {
+        write!(f, ", ")?;
+      } else {
+        write!(f, " ")?;
+      }
+    }
+    Ok(())
+  }
+}
+
+parser! {
+  pub fn loc_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Loc
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    token('@').with(expr_env.identifier()).map(|name| Loc { name })
+  }
+}
+
+parser! {
+  pub fn storepair_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> StorePair
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    (
+      loc_parser(calc_expr_env()),
+      expr_env.reserved("=").with(value_parser(calc_expr_env())),
+    ).map(|(loc, value)| StorePair { loc, value })
+  }
+}
+
+parser! {
+  pub fn store_parser['a, I](expr_env: LanguageEnv<'a, I>)(I) -> Store
+  where [
+    I: Stream<Item = char>,
+    I::Error: ParseError<char, I::Range, I::Position>,
+    <I::Error as ParseError<I::Item, I::Range, I::Position>>::StreamError:
+      From<::std::num::ParseIntError>,
+  ]
+  {
+    sep_by(storepair_parser(calc_expr_env()), expr_env.reserved(",")).map(Store)
+  }
+}
+
+#[derive(Debug, PartialEq, Clone)]
 pub enum Value {
   VBool(bool),
   VInt(i64),
@@ -336,6 +444,9 @@ pub enum Value {
   },
   VCons(Box<Value>, Box<Value>),
   VNil,
+  VLoc {
+    loc: Loc,
+  },
 }
 
 pub fn v_cons(l: Value, r: Value) -> Value {
@@ -380,6 +491,7 @@ parser! {
         expr_env.parens(env_parser()),
         expr_env.brackets(fun_parser(calc_expr_env()))
       ).map(|(env, (var, expr))| Value::VClosure { env, var, expr })),
+      loc_parser(calc_expr_env()).map(|loc| Value::VLoc { loc }),
       expr_env.parens(value_parser(calc_expr_env())),
       (optional(token('-').skip(spaces())), expr_env.integer()).map(|(neg, x)| Value::VInt(
         match neg {
@@ -548,6 +660,9 @@ impl fmt::Display for Expr {
       Nil => write!(f, "[]"),
       Cons(l, r) => write!(f, "({} :: {})", l, r),
       Match(e, c) => write!(f, "(match {} with {})", e, c),
+      Ref(e) => write!(f, "(ref {})", e),
+      Deref(e) => write!(f, "! {}", e),
+      Assign(l, r) => write!(f, "({} := {})", l, r),
     }
   }
 }
@@ -567,6 +682,7 @@ impl fmt::Display for Value {
       } => write!(f, "({})[rec {} = fun {} -> {}]", env, var, arg, expr),
       VNil => write!(f, "[]"),
       VCons(l, r) => write!(f, "({} :: {})", l, r),
+      VLoc { loc } => write!(f, "{}", loc),
     }
   }
 }
