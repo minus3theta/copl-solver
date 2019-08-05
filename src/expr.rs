@@ -403,6 +403,9 @@ impl Store {
       "/ "
     }
   }
+  pub fn locs(self) -> Vec<Loc> {
+    self.0.into_iter().map(|StorePair {loc, ..}| loc).rev().collect()
+  }
 }
 
 impl fmt::Display for Store {

@@ -16,6 +16,7 @@ fn main() {
     .easy_parse(input)
     .unwrap()
     .0;
-  let proof = evalrefml3::prove(judge.pre_store, judge.env, judge.expr);
+  let mut locs = judge.post_store.locs();
+  let proof = evalrefml3::prove(judge.pre_store, judge.env, judge.expr, &mut locs);
   println!("{}", proof);
 }

@@ -150,7 +150,7 @@ impl BProof {
       BProof {
         value,
         kind: BTimes(l, r),
-      } => print_binop(f, "times", "B-Times", l, r, value),
+      } => print_binop(f, "times", "B-Mult", l, r, value),
       BProof {
         value,
         kind: BLt(l, r),
@@ -242,11 +242,12 @@ fn prove_binop(
   expr: Expr,
   l: Expr,
   r: Expr,
+  locs: &mut Vec<Loc>,
   b_prover: impl Fn(&Value, &Value) -> BProof,
   constructor: impl Fn(Box<EProof>, Box<EProof>, Box<BProof>) -> EProofKind,
 ) -> EProof {
-  let pl = prove(pre_store.clone(), env.clone(), l);
-  let pr = prove(pl.post_store.clone(), env.clone(), r);
+  let pl = prove(pre_store.clone(), env.clone(), l, locs);
+  let pr = prove(pl.post_store.clone(), env.clone(), r, locs);
   let pb = b_prover(&pl.value, &pr.value);
   e_proof(
     pre_store,
@@ -258,7 +259,7 @@ fn prove_binop(
   )
 }
 
-pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
+pub fn prove(pre_store: Store, env: Env, expr: Expr, locs: &mut Vec<Loc>) -> EProof {
   use self::EProofKind::*;
   use self::Expr::*;
   use self::Value::*;
@@ -266,15 +267,15 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
   match expr.clone() {
     Int(i) => e_proof(pre_store.clone(), env, expr, VInt(i), pre_store, EInt),
     Bool(b) => e_proof(pre_store.clone(), env, expr, VBool(b), pre_store, EBool),
-    Plus(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_plus, EPlus),
-    Minus(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_minus, EMinus),
-    Times(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_times, ETimes),
-    Lt(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_lt, ELt),
+    Plus(l, r) => prove_binop(pre_store, env, expr, *l, *r, locs, b_plus, EPlus),
+    Minus(l, r) => prove_binop(pre_store, env, expr, *l, *r, locs, b_minus, EMinus),
+    Times(l, r) => prove_binop(pre_store, env, expr, *l, *r, locs, b_times, ETimes),
+    Lt(l, r) => prove_binop(pre_store, env, expr, *l, *r, locs, b_lt, ELt),
     If(p, t, f) => {
-      let pp = prove(pre_store.clone(), env.clone(), *p);
+      let pp = prove(pre_store.clone(), env.clone(), *p, locs);
       match pp.value {
         VBool(true) => {
-          let pt = prove(pp.post_store.clone(), env.clone(), *t);
+          let pt = prove(pp.post_store.clone(), env.clone(), *t, locs);
           e_proof(
             pre_store,
             env,
@@ -285,7 +286,7 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
           )
         }
         VBool(false) => {
-          let pf = prove(pp.post_store.clone(), env.clone(), *f);
+          let pf = prove(pp.post_store.clone(), env.clone(), *f, locs);
           e_proof(
             pre_store,
             env,
@@ -312,13 +313,13 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
       }
     }
     Let(var, def, body) => {
-      let pdef = prove(pre_store.clone(), env.clone(), *def);
+      let pdef = prove(pre_store.clone(), env.clone(), *def, locs);
       let mut next_env = env.clone();
       next_env.0.push(EnvPair {
         var: var.clone(),
         value: pdef.value.clone(),
       });
-      let pbody = prove(pdef.post_store.clone(), next_env, *body);
+      let pbody = prove(pdef.post_store.clone(), next_env, *body, locs);
       e_proof(
         pre_store,
         env,
@@ -344,8 +345,8 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
       )
     }
     App(l, r) => {
-      let pl = prove(pre_store.clone(), env.clone(), *l);
-      let pr = prove(pl.post_store.clone(), env.clone(), *r);
+      let pl = prove(pre_store.clone(), env.clone(), *l, locs);
+      let pr = prove(pl.post_store.clone(), env.clone(), *r, locs);
       match pl.value.clone() {
         VClosure {
           env: mut env_cl,
@@ -353,7 +354,7 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
           expr: body,
         } => {
           env_cl.0.push(env_pair(var, pr.value.clone()));
-          let p_cl = prove(pr.post_store.clone(), env_cl, body);
+          let p_cl = prove(pr.post_store.clone(), env_cl, body, locs);
           e_proof(
             pre_store,
             env,
@@ -371,7 +372,7 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
         } => {
           env_cl.0.push(env_pair(var, pl.value.clone()));
           env_cl.0.push(env_pair(arg, pr.value.clone()));
-          let p_cl = prove(pr.post_store.clone(), env_cl, body);
+          let p_cl = prove(pr.post_store.clone(), env_cl, body, locs);
           e_proof(
             pre_store.clone(),
             env,
@@ -396,7 +397,7 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
         var,
         value: closure,
       });
-      let p = prove(pre_store.clone(), next_env, *body);
+      let p = prove(pre_store.clone(), next_env, *body, locs);
       e_proof(
         pre_store,
         env,
@@ -407,10 +408,8 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
       )
     }
     Ref(e) => {
-      let p = prove(pre_store.clone(), env.clone(), *e);
-      let loc = Loc {
-        name: "l1".to_owned(),
-      };
+      let p = prove(pre_store.clone(), env.clone(), *e, locs);
+      let loc = locs.pop().unwrap();
       let mut post_store = p.post_store.clone();
       post_store.push(loc.clone(), p.value.clone());
       e_proof(
@@ -423,7 +422,7 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
       )
     }
     Deref(e) => {
-      let p = prove(pre_store.clone(), env.clone(), *e);
+      let p = prove(pre_store.clone(), env.clone(), *e, locs);
       match p.value.clone() {
         VLoc { loc } => match p.post_store.find(loc) {
           Some(v) => e_proof(
@@ -440,13 +439,13 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
       }
     }
     Assign(l, r) => {
-      let pl = prove(pre_store.clone(), env.clone(), *l);
+      let pl = prove(pre_store.clone(), env.clone(), *l, locs);
       let loc = if let VLoc { loc } = pl.value.clone() {
         loc
       } else {
         panic!("Not a reference");
       };
-      let pr = prove(pl.post_store.clone(), env.clone(), *r);
+      let pr = prove(pl.post_store.clone(), env.clone(), *r, locs);
       let mut post_store = pr.post_store.clone();
       post_store.replace(loc, pr.value.clone());
       e_proof(
@@ -490,7 +489,7 @@ impl EProof {
     match &self.kind {
       EPlus(l, r, b) => print_binop(f, "E-Plus", l.as_ref(), r.as_ref(), b.as_ref()),
       EMinus(l, r, b) => print_binop(f, "E-Minus", l.as_ref(), r.as_ref(), b.as_ref()),
-      ETimes(l, r, b) => print_binop(f, "E-Times", l.as_ref(), r.as_ref(), b.as_ref()),
+      ETimes(l, r, b) => print_binop(f, "E-Mult", l.as_ref(), r.as_ref(), b.as_ref()),
       ELt(l, r, b) => print_binop(f, "E-Lt", l.as_ref(), r.as_ref(), b.as_ref()),
       k => {
         let (rule, proofs) = k.extract();
