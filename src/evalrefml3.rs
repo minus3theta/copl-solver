@@ -406,6 +406,58 @@ pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
         ELetRec(Box::new(p)),
       )
     }
+    Ref(e) => {
+      let p = prove(pre_store.clone(), env.clone(), *e);
+      let loc = Loc {
+        name: "l1".to_owned(),
+      };
+      let mut post_store = p.post_store.clone();
+      post_store.push(loc.clone(), p.value.clone());
+      e_proof(
+        pre_store,
+        env,
+        expr,
+        VLoc { loc },
+        post_store,
+        ERef(Box::new(p)),
+      )
+    }
+    Deref(e) => {
+      let p = prove(pre_store.clone(), env.clone(), *e);
+      match p.value.clone() {
+        VLoc { loc } => match p.post_store.find(loc) {
+          Some(v) => e_proof(
+            pre_store,
+            env,
+            expr,
+            v,
+            p.post_store.clone(),
+            EDeref(Box::new(p)),
+          ),
+          None => panic!("Undefined reference"),
+        },
+        _ => panic!("Not a reference"),
+      }
+    }
+    Assign(l, r) => {
+      let pl = prove(pre_store.clone(), env.clone(), *l);
+      let loc = if let VLoc { loc } = pl.value.clone() {
+        loc
+      } else {
+        panic!("Not a reference");
+      };
+      let pr = prove(pl.post_store.clone(), env.clone(), *r);
+      let mut post_store = pr.post_store.clone();
+      post_store.replace(loc, pr.value.clone());
+      e_proof(
+        pre_store,
+        env,
+        expr,
+        pr.value.clone(),
+        post_store,
+        EAssign(Box::new(pl), Box::new(pr)),
+      )
+    }
     _ => panic!("Unsupported expression"),
   }
 }
@@ -417,11 +469,15 @@ impl EProof {
       |f: &mut fmt::Formatter, rule: &str, l: &EProof, r: &EProof, b: &BProof| -> fmt::Result {
         write!(
           f,
-          "{}{}|- {} evalto {} by {} {{\n",
+          "{}{}{}{}|- {} evalto {} {}{}by {} {{\n",
           " ".repeat(offset),
+          self.pre_store,
+          self.pre_store.separator(),
           self.env,
           self.expr,
           self.value,
+          self.post_store.separator(),
+          self.post_store,
           rule
         )?;
         l.print(f, offset + 2)?;
@@ -440,12 +496,14 @@ impl EProof {
         let (rule, proofs) = k.extract();
         write!(
           f,
-          "{}{}/ {}|- {} evalto {} / {}by {} ",
+          "{}{}{}{}|- {} evalto {} {}{}by {} ",
           " ".repeat(offset),
           self.pre_store,
+          self.pre_store.separator(),
           self.env,
           self.expr,
           self.value,
+          self.post_store.separator(),
           self.post_store,
           rule
         )?;

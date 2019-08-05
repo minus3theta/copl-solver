@@ -368,6 +368,41 @@ impl Store {
   pub fn new() -> Store {
     Store(Vec::new())
   }
+  pub fn push(&mut self, loc: Loc, value: Value) {
+    self.0.push(StorePair { loc, value });
+  }
+  pub fn find(&self, l: Loc) -> Option<Value> {
+    if let Some(StorePair { value, .. }) = self
+      .0
+      .clone()
+      .into_iter()
+      .rev()
+      .find(|StorePair { loc, .. }| *loc == l)
+    {
+      Some(value)
+    } else {
+      None
+    }
+  }
+  pub fn replace(&mut self, l: Loc, v: Value) {
+    for &mut StorePair {
+      ref loc,
+      ref mut value,
+    } in self.0.iter_mut().rev()
+    {
+      if *loc == l {
+        *value = v;
+        return;
+      }
+    }
+  }
+  pub fn separator(&self) -> &str {
+    if self.0.is_empty() {
+      ""
+    } else {
+      "/ "
+    }
+  }
 }
 
 impl fmt::Display for Store {
