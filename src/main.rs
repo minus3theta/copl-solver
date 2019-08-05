@@ -16,7 +16,6 @@ fn main() {
     .easy_parse(input)
     .unwrap()
     .0;
-  // let proof = evalrefml3::prove(judge.env, judge.expr);
-  // println!("{}", proof);
-  println!("{}", judge);
+  let proof = evalrefml3::prove(judge.pre_store, judge.env, judge.expr);
+  println!("{}", proof);
 }

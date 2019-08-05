@@ -175,33 +175,69 @@ pub enum EProofKind {
   EMinus(Box<EProof>, Box<EProof>, Box<BProof>),
   ETimes(Box<EProof>, Box<EProof>, Box<BProof>),
   ELt(Box<EProof>, Box<EProof>, Box<BProof>),
-  EVar1,
-  EVar2(Box<EProof>),
+  EVar,
   ELet(Box<EProof>, Box<EProof>),
   EFun,
   EApp(Box<EProof>, Box<EProof>, Box<EProof>),
   ELetRec(Box<EProof>),
   EAppRec(Box<EProof>, Box<EProof>, Box<EProof>),
+  ERef(Box<EProof>),
+  EDeref(Box<EProof>),
+  EAssign(Box<EProof>, Box<EProof>),
+}
+
+impl EProofKind {
+  fn extract(&self) -> (&str, Vec<&EProof>) {
+    use evalrefml3::EProofKind::*;
+    match self {
+      EInt => ("E-Int", Vec::new()),
+      EBool => ("E-Bool", Vec::new()),
+      EIfT(l, r) => ("E-IfT", vec![l, r]),
+      EIfF(l, r) => ("E-IfF", vec![l, r]),
+      EVar => ("E-Var", Vec::new()),
+      ELet(l, r) => ("E-Let", vec![l, r]),
+      EFun => ("E-Fun", Vec::new()),
+      EApp(p1, p2, p3) => ("E-App", vec![p1, p2, p3]),
+      ELetRec(p) => ("E-LetRec", vec![p]),
+      EAppRec(p1, p2, p3) => ("E-AppRec", vec![p1, p2, p3]),
+      ERef(p) => ("E-Ref", vec![p]),
+      EDeref(p) => ("E-Deref", vec![p]),
+      EAssign(l, r) => ("E-Assign", vec![l, r]),
+      _ => panic!("Illegal argument"),
+    }
+  }
 }
 
 #[derive(Debug, PartialEq)]
 pub struct EProof {
+  pre_store: Store,
   env: Env,
   expr: Expr,
   value: Value,
+  post_store: Store,
   kind: EProofKind,
 }
 
-fn e_proof(env: Env, expr: Expr, value: Value, kind: EProofKind) -> EProof {
+fn e_proof(
+  pre_store: Store,
+  env: Env,
+  expr: Expr,
+  value: Value,
+  post_store: Store,
+  kind: EProofKind,
+) -> EProof {
   EProof {
+    pre_store,
     env,
     expr,
     value,
+    post_store,
     kind,
   }
 }
 
 fn prove_binop(
+  pre_store: Store,
   env: Env,
   expr: Expr,
   l: Expr,
@@ -209,47 +245,53 @@ fn prove_binop(
   b_prover: impl Fn(&Value, &Value) -> BProof,
   constructor: impl Fn(Box<EProof>, Box<EProof>, Box<BProof>) -> EProofKind,
 ) -> EProof {
-  let pl = prove(env.clone(), l);
-  let pr = prove(env.clone(), r);
+  let pl = prove(pre_store.clone(), env.clone(), l);
+  let pr = prove(pl.post_store.clone(), env.clone(), r);
   let pb = b_prover(&pl.value, &pr.value);
   e_proof(
+    pre_store,
     env,
     expr,
     pb.value.clone(),
+    pr.post_store.clone(),
     constructor(Box::new(pl), Box::new(pr), Box::new(pb)),
   )
 }
 
-pub fn prove(env: Env, expr: Expr) -> EProof {
+pub fn prove(pre_store: Store, env: Env, expr: Expr) -> EProof {
   use self::EProofKind::*;
   use self::Expr::*;
   use self::Value::*;
 
   match expr.clone() {
-    Int(i) => e_proof(env, expr, VInt(i), EInt),
-    Bool(b) => e_proof(env, expr, VBool(b), EBool),
-    Plus(l, r) => prove_binop(env, expr, *l, *r, b_plus, EPlus),
-    Minus(l, r) => prove_binop(env, expr, *l, *r, b_minus, EMinus),
-    Times(l, r) => prove_binop(env, expr, *l, *r, b_times, ETimes),
-    Lt(l, r) => prove_binop(env, expr, *l, *r, b_lt, ELt),
+    Int(i) => e_proof(pre_store.clone(), env, expr, VInt(i), pre_store, EInt),
+    Bool(b) => e_proof(pre_store.clone(), env, expr, VBool(b), pre_store, EBool),
+    Plus(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_plus, EPlus),
+    Minus(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_minus, EMinus),
+    Times(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_times, ETimes),
+    Lt(l, r) => prove_binop(pre_store, env, expr, *l, *r, b_lt, ELt),
     If(p, t, f) => {
-      let pp = prove(env.clone(), *p);
+      let pp = prove(pre_store.clone(), env.clone(), *p);
       match pp.value {
         VBool(true) => {
-          let pt = prove(env.clone(), *t);
+          let pt = prove(pp.post_store.clone(), env.clone(), *t);
           e_proof(
+            pre_store,
             env,
             expr,
             pt.value.clone(),
+            pt.post_store.clone(),
             EIfT(Box::new(pp), Box::new(pt)),
           )
         }
         VBool(false) => {
-          let pf = prove(env.clone(), *f);
+          let pf = prove(pp.post_store.clone(), env.clone(), *f);
           e_proof(
+            pre_store,
             env,
             expr,
             pf.value.clone(),
+            pf.post_store.clone(),
             EIfF(Box::new(pp), Box::new(pf)),
           )
         }
@@ -257,37 +299,39 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
       }
     }
     Ident(x) => {
-      if env.0.is_empty() {
-        panic!("Undefined variable")
-      }
-      let EnvPair { var, value } = env.0.last().unwrap().clone();
-      if *x == var {
-        e_proof(env, expr, value, EVar1)
+      if let Some(EnvPair { value, .. }) = env
+        .0
+        .clone()
+        .into_iter()
+        .rev()
+        .find(|EnvPair { var, .. }| *var == x)
+      {
+        e_proof(pre_store.clone(), env, expr, value, pre_store, EVar)
       } else {
-        let mut next_env = env.clone();
-        next_env.0.pop();
-        let p = prove(next_env, expr.clone());
-        e_proof(env, expr, p.value.clone(), EVar2(Box::new(p)))
+        panic!("Undefined variable")
       }
     }
     Let(var, def, body) => {
-      let pdef = prove(env.clone(), *def);
+      let pdef = prove(pre_store.clone(), env.clone(), *def);
       let mut next_env = env.clone();
       next_env.0.push(EnvPair {
         var: var.clone(),
         value: pdef.value.clone(),
       });
-      let pbody = prove(next_env, *body);
+      let pbody = prove(pdef.post_store.clone(), next_env, *body);
       e_proof(
+        pre_store,
         env,
         expr,
         pbody.value.clone(),
+        pbody.post_store.clone(),
         ELet(Box::new(pdef), Box::new(pbody)),
       )
     }
     Fun(var, body) => {
       let env2 = env.clone();
       e_proof(
+        pre_store.clone(),
         env,
         expr,
         VClosure {
@@ -295,12 +339,13 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
           var: var.to_owned(),
           expr: *body,
         },
+        pre_store,
         EFun,
       )
     }
     App(l, r) => {
-      let pl = prove(env.clone(), *l);
-      let pr = prove(env.clone(), *r);
+      let pl = prove(pre_store.clone(), env.clone(), *l);
+      let pr = prove(pl.post_store.clone(), env.clone(), *r);
       match pl.value.clone() {
         VClosure {
           env: mut env_cl,
@@ -308,11 +353,13 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
           expr: body,
         } => {
           env_cl.0.push(env_pair(var, pr.value.clone()));
-          let p_cl = prove(env_cl, body);
+          let p_cl = prove(pr.post_store.clone(), env_cl, body);
           e_proof(
+            pre_store,
             env,
             expr,
             p_cl.value.clone(),
+            p_cl.post_store.clone(),
             EApp(Box::new(pl), Box::new(pr), Box::new(p_cl)),
           )
         }
@@ -324,11 +371,13 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
         } => {
           env_cl.0.push(env_pair(var, pl.value.clone()));
           env_cl.0.push(env_pair(arg, pr.value.clone()));
-          let p_cl = prove(env_cl, body);
+          let p_cl = prove(pr.post_store.clone(), env_cl, body);
           e_proof(
+            pre_store.clone(),
             env,
             expr,
             p_cl.value.clone(),
+            p_cl.post_store.clone(),
             EAppRec(Box::new(pl), Box::new(pr), Box::new(p_cl)),
           )
         }
@@ -347,8 +396,15 @@ pub fn prove(env: Env, expr: Expr) -> EProof {
         var,
         value: closure,
       });
-      let p = prove(next_env, *body);
-      e_proof(env, expr, p.value.clone(), ELetRec(Box::new(p)))
+      let p = prove(pre_store.clone(), next_env, *body);
+      e_proof(
+        pre_store,
+        env,
+        expr,
+        p.value.clone(),
+        p.post_store.clone(),
+        ELetRec(Box::new(p)),
+      )
     }
     _ => panic!("Unsupported expression"),
   }
@@ -376,139 +432,37 @@ impl EProof {
         write!(f, "\n{}}}", " ".repeat(offset))
       };
     match &self.kind {
-      EInt => write!(
-        f,
-        "{}{}|- {} evalto {} by E-Int {{}}",
-        " ".repeat(offset),
-        self.env,
-        self.expr,
-        self.value
-      ),
-      EBool => write!(
-        f,
-        "{}{}|- {} evalto {} by E-Bool {{}}",
-        " ".repeat(offset),
-        self.env,
-        self.expr,
-        self.value
-      ),
       EPlus(l, r, b) => print_binop(f, "E-Plus", l.as_ref(), r.as_ref(), b.as_ref()),
       EMinus(l, r, b) => print_binop(f, "E-Minus", l.as_ref(), r.as_ref(), b.as_ref()),
       ETimes(l, r, b) => print_binop(f, "E-Times", l.as_ref(), r.as_ref(), b.as_ref()),
       ELt(l, r, b) => print_binop(f, "E-Lt", l.as_ref(), r.as_ref(), b.as_ref()),
-      EIfT(pp, pt) => {
+      k => {
+        let (rule, proofs) = k.extract();
         write!(
           f,
-          "{}{}|- {} evalto {} by E-IfT {{\n",
+          "{}{}/ {}|- {} evalto {} / {}by {} ",
           " ".repeat(offset),
+          self.pre_store,
           self.env,
           self.expr,
           self.value,
+          self.post_store,
+          rule
         )?;
-        pp.print(f, offset + 2)?;
-        write!(f, ";\n")?;
-        pt.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
-      }
-      EIfF(pp, pf) => {
-        write!(
-          f,
-          "{}{}|- {} evalto {} by E-IfF {{\n",
-          " ".repeat(offset),
-          self.env,
-          self.expr,
-          self.value,
-        )?;
-        pp.print(f, offset + 2)?;
-        write!(f, ";\n")?;
-        pf.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
-      }
-      EVar1 => write!(
-        f,
-        "{}{}|- {} evalto {} by E-Var1 {{}}",
-        " ".repeat(offset),
-        self.env,
-        self.expr,
-        self.value
-      ),
-      EVar2(p) => {
-        write!(
-          f,
-          "{}{}|- {} evalto {} by E-Var2 {{\n",
-          " ".repeat(offset),
-          self.env,
-          self.expr,
-          self.value,
-        )?;
-        p.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
-      }
-      ELet(pdef, pbody) => {
-        write!(
-          f,
-          "{}{}|- {} evalto {} by E-Let {{\n",
-          " ".repeat(offset),
-          self.env,
-          self.expr,
-          self.value,
-        )?;
-        pdef.print(f, offset + 2)?;
-        write!(f, ";\n")?;
-        pbody.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
-      }
-      EFun => write!(
-        f,
-        "{}{}|- {} evalto {} by E-Fun {{}}",
-        " ".repeat(offset),
-        self.env,
-        self.expr,
-        self.value
-      ),
-      EApp(pl, pr, pcl) => {
-        write!(
-          f,
-          "{}{}|- {} evalto {} by E-App {{\n",
-          " ".repeat(offset),
-          self.env,
-          self.expr,
-          self.value,
-        )?;
-        pl.print(f, offset + 2)?;
-        write!(f, ";\n")?;
-        pr.print(f, offset + 2)?;
-        write!(f, ";\n")?;
-        pcl.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
-      }
-      ELetRec(p) => {
-        write!(
-          f,
-          "{}{}|- {} evalto {} by E-LetRec {{\n",
-          " ".repeat(offset),
-          self.env,
-          self.expr,
-          self.value,
-        )?;
-        p.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
-      }
-      EAppRec(pl, pr, pcl) => {
-        write!(
-          f,
-          "{}{}|- {} evalto {} by E-AppRec {{\n",
-          " ".repeat(offset),
-          self.env,
-          self.expr,
-          self.value,
-        )?;
-        pl.print(f, offset + 2)?;
-        write!(f, ";\n")?;
-        pr.print(f, offset + 2)?;
-        write!(f, ";\n")?;
-        pcl.print(f, offset + 2)?;
-        write!(f, "\n{}}}", " ".repeat(offset))
+        let n = proofs.len();
+        if n == 0 {
+          return write!(f, "{{}}");
+        }
+        write!(f, "{{\n")?;
+        for (i, p) in proofs.iter().enumerate() {
+          p.print(f, offset + 2)?;
+          if i == n - 1 {
+            write!(f, "\n")?;
+          } else {
+            write!(f, ";\n")?;
+          }
+        }
+        write!(f, "{}}}", " ".repeat(offset))
       }
     }
   }
