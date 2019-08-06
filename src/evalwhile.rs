@@ -124,6 +124,21 @@ impl fmt::Display for StorePair {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct Store(Vec<StorePair>);
 
+impl Store {
+  pub fn replace(&mut self, v: &Var, val: Value) {
+    for &mut StorePair {
+      ref var,
+      ref mut value,
+    } in self.0.iter_mut().rev()
+    {
+      if var == v {
+        *value = val;
+        return;
+      }
+    }
+  }
+}
+
 impl fmt::Display for Store {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     let store = &self.0;
@@ -446,13 +461,13 @@ parser! {
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
-pub enum Proof {
-  A(AProof),
-  B(BProof),
-  C(CProof),
+pub enum Proof<'a> {
+  A(&'a AProof),
+  B(&'a BProof),
+  C(&'a CProof),
 }
 
-impl Proof {
+impl<'a> Proof<'a> {
   fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
     use self::Proof::*;
     match self {
@@ -461,9 +476,25 @@ impl Proof {
       C(c) => c.print(f, offset),
     }
   }
+  fn print_proofs(proofs: &Vec<Proof<'a>>, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
+    let n = proofs.len();
+    if n == 0 {
+      return write!(f, "{{}}");
+    }
+    write!(f, "{{\n")?;
+    for (i, p) in proofs.iter().enumerate() {
+      p.print(f, offset + 2)?;
+      if i == n - 1 {
+        write!(f, "\n")?;
+      } else {
+        write!(f, ";\n")?;
+      }
+    }
+    Ok(())
+  }
 }
 
-impl fmt::Display for Proof {
+impl<'a> fmt::Display for Proof<'a> {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     self.print(f, 0)
   }
@@ -517,10 +548,12 @@ pub enum CProofKind {
 }
 
 impl CProofKind {
-  fn extract(&self) -> (&str, Vec<Proof>) {
+  fn extract<'a>(&'a self) -> (&str, Vec<Proof<'a>>) {
     use self::CProofKind::*;
+    use self::Proof::*;
     match self {
       CSkip => ("C-Skip", Vec::new()),
+      CAssign(a) => ("C-Assign", vec![A(a)]),
       _ => unimplemented!(),
     }
   }
@@ -546,19 +579,7 @@ impl CProof {
       self.post_store,
       rule
     )?;
-    let n = proofs.len();
-    if n == 0 {
-      return write!(f, "{{}}");
-    }
-    write!(f, "{{\n")?;
-    for (i, p) in proofs.iter().enumerate() {
-      p.print(f, offset + 2)?;
-      if i == n - 1 {
-        write!(f, "\n")?;
-      } else {
-        write!(f, ";\n")?;
-      }
-    }
+    Proof::print_proofs(&proofs, f, offset)?;
     write!(f, "{}}}", " ".repeat(offset))
   }
 }
