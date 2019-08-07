@@ -28,7 +28,7 @@ impl fmt::Display for Aop {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub enum AExp {
   AInt(Value),
-  AVar(Var),
+  AIdent(Var),
   AOp(Aop, Box<AExp>, Box<AExp>),
 }
 
@@ -37,7 +37,7 @@ impl fmt::Display for AExp {
     use self::AExp::*;
     match self {
       AInt(i) => write!(f, "{}", i),
-      AVar(x) => write!(f, "{}", x),
+      AIdent(x) => write!(f, "{}", x),
       AOp(op, l, r) => write!(f, "({} {} {})", l, op, r),
     }
   }
@@ -92,7 +92,7 @@ impl fmt::Display for Comp {
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub enum BExp {
   BBool(BValue),
-  BNot(Box<BExp>),
+  BNeg(Box<BExp>),
   BLop(Lop, Box<BExp>, Box<BExp>),
   BComp(Comp, Box<AExp>, Box<AExp>),
 }
@@ -102,7 +102,7 @@ impl fmt::Display for BExp {
     use self::BExp::*;
     match self {
       BBool(b) => write!(f, "{}", b),
-      BNot(e) => write!(f, "! {}", e),
+      BNeg(e) => write!(f, "! {}", e),
       BLop(op, l, r) => write!(f, "({} {} {})", l, op, r),
       BComp(op, l, r) => write!(f, "({} {} {})", l, op, r),
     }
@@ -125,6 +125,14 @@ impl fmt::Display for StorePair {
 pub struct Store(Vec<StorePair>);
 
 impl Store {
+  pub fn find(&self, v: &Var) -> Option<Value> {
+    self
+      .0
+      .iter()
+      .rev()
+      .find(|StorePair { var, .. }| var == v)
+      .map(|StorePair { value, .. }| *value)
+  }
   pub fn replace(&mut self, v: &Var, val: Value) {
     for &mut StorePair {
       ref var,
@@ -158,7 +166,7 @@ impl fmt::Display for Store {
 pub enum Com {
   Skip,
   Assign(Var, Box<AExp>),
-  Succ(Box<Com>, Box<Com>),
+  Seq(Box<Com>, Box<Com>),
   If(Box<BExp>, Box<Com>, Box<Com>),
   While(Box<BExp>, Box<Com>),
 }
@@ -169,7 +177,7 @@ impl fmt::Display for Com {
     match self {
       Skip => write!(f, "skip"),
       Assign(x, a) => write!(f, "{} := {}", x, a),
-      Succ(l, r) => write!(f, "{}; {}", l, r),
+      Seq(l, r) => write!(f, "{}; {}", l, r),
       If(b, l, r) => write!(f, "if {} then {} else {}", b, l, r),
       While(b, c) => write!(f, "while ({}) do {}", b, c),
     }
@@ -264,7 +272,7 @@ parser! {
   {
     choice!(
       expr_env.integer().map(AExp::AInt),
-      expr_env.identifier().map(AExp::AVar),
+      expr_env.identifier().map(AExp::AIdent),
       expr_env.parens(aexp_parser())
     )
   }
@@ -316,7 +324,7 @@ parser! {
     choice!(
       expr_env.reserved("true").map(|_| BExp::BBool(true)),
       expr_env.reserved("false").map(|_| BExp::BBool(false)),
-      expr_env.reserved("!").with(bexp_atom_parser(calc_expr_env())).map(|e| BExp::BNot(Box::new(e))),
+      expr_env.reserved("!").with(bexp_atom_parser(calc_expr_env())).map(|e| BExp::BNeg(Box::new(e))),
       expr_env.parens(bexp_parser()),
       bexp_comp_parser()
     )
@@ -392,7 +400,7 @@ parser! {
     ).map(|(l, r)| {
       match r {
         None => l,
-        Some(r) => Com::Succ(Box::new(l), Box::new(r)),
+        Some(r) => Com::Seq(Box::new(l), Box::new(r)),
       }
     })
   }
@@ -410,10 +418,6 @@ parser! {
     choice!(
       expr_env.reserved("skip").map(|_| Com::Skip),
       (
-        expr_env.identifier().skip(expr_env.reserved(":=")),
-        aexp_parser()
-      ).map(|(x, a)| Com::Assign(x, Box::new(a))),
-      (
         expr_env.reserved("if").with(bexp_parser()),
         expr_env.reserved("then").with(com_parser(calc_expr_env())),
         expr_env.reserved("else").with(com_parser(calc_expr_env()))
@@ -421,7 +425,11 @@ parser! {
       (
         expr_env.reserved("while").with(expr_env.parens(bexp_parser())),
         expr_env.reserved("do").with(com_parser(calc_expr_env()))
-      ).map(|(b, c)| Com::While(Box::new(b), Box::new(c)))
+      ).map(|(b, c)| Com::While(Box::new(b), Box::new(c))),
+      (
+        expr_env.identifier().skip(expr_env.reserved(":=")),
+        aexp_parser()
+      ).map(|(x, a)| Com::Assign(x, Box::new(a)))
     )
   }
 }
@@ -471,8 +479,8 @@ impl<'a> Proof<'a> {
   fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
     use self::Proof::*;
     match self {
-      A(a) => unimplemented!(),
-      B(b) => unimplemented!(),
+      A(a) => a.print(f, offset),
+      B(b) => b.print(f, offset),
       C(c) => c.print(f, offset),
     }
   }
@@ -490,7 +498,7 @@ impl<'a> Proof<'a> {
         write!(f, ";\n")?;
       }
     }
-    Ok(())
+    write!(f, "{}}}", " ".repeat(offset))
   }
 }
 
@@ -509,12 +517,48 @@ pub enum AProofKind {
   ATimes(Box<AProof>, Box<AProof>),
 }
 
+impl AProofKind {
+  fn extract<'a>(&'a self) -> (&str, Vec<Proof<'a>>) {
+    use self::AProofKind::*;
+    use self::Proof::*;
+    match self {
+      AConst => ("A-Const", Vec::new()),
+      AVar => ("A-Var", Vec::new()),
+      APlus(l, r) => ("A-Plus", vec![A(l), A(r)]),
+      AMinus(l, r) => ("A-Minus", vec![A(l), A(r)]),
+      ATimes(l, r) => ("A-Times", vec![A(l), A(r)]),
+    }
+  }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct AProof {
   pub store: Store,
   pub aexp: AExp,
   pub value: Value,
   pub kind: AProofKind,
+}
+
+impl AProof {
+  fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
+    let (rule, proofs) = self.kind.extract();
+    write!(
+      f,
+      "{}{}|- {} evalto {} by {} ",
+      " ".repeat(offset),
+      self.store,
+      self.aexp,
+      self.value,
+      rule
+    )?;
+    Proof::print_proofs(&proofs, f, offset)
+  }
+}
+
+impl fmt::Display for AProof {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    self.print(f, 0)
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
@@ -528,12 +572,50 @@ pub enum BProofKind {
   BLe(Box<AProof>, Box<AProof>),
 }
 
+impl BProofKind {
+  fn extract<'a>(&'a self) -> (&str, Vec<Proof<'a>>) {
+    use self::BProofKind::*;
+    use self::Proof::*;
+    match self {
+      BConst => ("B-Const", Vec::new()),
+      BNot(e) => ("B-Not", vec![B(e)]),
+      BAnd(l, r) => ("B-And", vec![B(l), B(r)]),
+      BOr(l, r) => ("B-Or", vec![B(l), B(r)]),
+      BLt(l, r) => ("B-Lt", vec![A(l), A(r)]),
+      BEq(l, r) => ("B-Eq", vec![A(l), A(r)]),
+      BLe(l, r) => ("B-Le", vec![A(l), A(r)]),
+    }
+  }
+}
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
 pub struct BProof {
   pub store: Store,
   pub bexp: BExp,
   pub value: BValue,
   pub kind: BProofKind,
+}
+
+impl BProof {
+  fn print(&self, f: &mut fmt::Formatter, offset: usize) -> fmt::Result {
+    let (rule, proofs) = self.kind.extract();
+    write!(
+      f,
+      "{}{}|- {} evalto {} by {} ",
+      " ".repeat(offset),
+      self.store,
+      self.bexp,
+      self.value,
+      rule
+    )?;
+    Proof::print_proofs(&proofs, f, offset)
+  }
+}
+
+impl fmt::Display for BProof {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    self.print(f, 0)
+  }
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Hash)]
@@ -554,7 +636,11 @@ impl CProofKind {
     match self {
       CSkip => ("C-Skip", Vec::new()),
       CAssign(a) => ("C-Assign", vec![A(a)]),
-      _ => unimplemented!(),
+      CSeq(l, r) => ("C-Seq", vec![C(l), C(r)]),
+      CIfT(b, c) => ("C-IfT", vec![B(b), C(c)]),
+      CIfF(b, c) => ("C-IfF", vec![B(b), C(c)]),
+      CWhileT(b, c1, c2) => ("C-WhileT", vec![B(b), C(c1), C(c2)]),
+      CWhileF(b) => ("C-WhileF", vec![B(b)]),
     }
   }
 }
@@ -579,14 +665,127 @@ impl CProof {
       self.post_store,
       rule
     )?;
-    Proof::print_proofs(&proofs, f, offset)?;
-    write!(f, "{}}}", " ".repeat(offset))
+    Proof::print_proofs(&proofs, f, offset)
   }
 }
 
 impl fmt::Display for CProof {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     self.print(f, 0)
+  }
+}
+
+pub fn prove_aexp(aexp: AExp, store: Store) -> AProof {
+  use self::AExp::*;
+  use self::AProofKind::*;
+  match aexp.clone() {
+    AInt(value) => AProof {
+      store,
+      aexp,
+      value,
+      kind: AConst,
+    },
+    AIdent(v) => {
+      if let Some(value) = store.find(&v) {
+        AProof {
+          store,
+          aexp,
+          value,
+          kind: AVar,
+        }
+      } else {
+        panic!("Undefined variable")
+      }
+    }
+    AOp(op, l, r) => {
+      let pl = prove_aexp(*l, store.clone());
+      let pr = prove_aexp(*r, store.clone());
+      use self::Aop::*;
+      match op {
+        Plus => AProof {
+          store,
+          aexp,
+          value: pl.value + pr.value,
+          kind: APlus(Box::new(pl), Box::new(pr)),
+        },
+        Minus => AProof {
+          store,
+          aexp,
+          value: pl.value - pr.value,
+          kind: AMinus(Box::new(pl), Box::new(pr)),
+        },
+        Times => AProof {
+          store,
+          aexp,
+          value: pl.value * pr.value,
+          kind: ATimes(Box::new(pl), Box::new(pr)),
+        },
+      }
+    }
+  }
+}
+
+pub fn prove_bexp(bexp: BExp, store: Store) -> BProof {
+  use self::BExp::*;
+  use self::BProofKind::*;
+  match bexp.clone() {
+    BBool(value) => BProof {
+      store,
+      bexp,
+      value,
+      kind: BConst,
+    },
+    BNeg(e) => {
+      let p = prove_bexp(*e, store.clone());
+      BProof {
+        store,
+        bexp,
+        value: !p.value,
+        kind: BNot(Box::new(p)),
+      }
+    }
+    BLop(op, l, r) => {
+      let pl = prove_bexp(*l, store.clone());
+      let pr = prove_bexp(*r, store.clone());
+      match op {
+        Lop::And => BProof {
+          store,
+          bexp,
+          value: pl.value && pr.value,
+          kind: BAnd(Box::new(pl), Box::new(pr)),
+        },
+        Lop::Or => BProof {
+          store,
+          bexp,
+          value: pl.value || pr.value,
+          kind: BOr(Box::new(pl), Box::new(pr)),
+        },
+      }
+    }
+    BComp(op, l, r) => {
+      let pl = prove_aexp(*l, store.clone());
+      let pr = prove_aexp(*r, store.clone());
+      match op {
+        Comp::Less => BProof {
+          store,
+          bexp,
+          value: pl.value < pr.value,
+          kind: BLt(Box::new(pl), Box::new(pr)),
+        },
+        Comp::Equal => BProof {
+          store,
+          bexp,
+          value: pl.value == pr.value,
+          kind: BEq(Box::new(pl), Box::new(pr)),
+        },
+        Comp::LessEqual => BProof {
+          store,
+          bexp,
+          value: pl.value <= pr.value,
+          kind: BLe(Box::new(pl), Box::new(pr)),
+        },
+      }
+    }
   }
 }
 
@@ -600,7 +799,67 @@ pub fn prove_com(com: Com, store: Store) -> CProof {
       post_store: store,
       kind: CSkip,
     },
-    _ => unimplemented!(),
+    Assign(v, aexp) => {
+      let aproof = prove_aexp(*aexp, store.clone());
+      let mut post_store = aproof.store.clone();
+      post_store.replace(&v, aproof.value.clone());
+      CProof {
+        com,
+        pre_store: store,
+        post_store,
+        kind: CAssign(Box::new(aproof)),
+      }
+    }
+    Seq(l, r) => {
+      let pl = prove_com(*l, store.clone());
+      let pr = prove_com(*r, pl.post_store.clone());
+      CProof {
+        com,
+        pre_store: store,
+        post_store: pr.post_store.clone(),
+        kind: CSeq(Box::new(pl), Box::new(pr)),
+      }
+    }
+    If(b, t, f) => {
+      let pb = prove_bexp(*b, store.clone());
+      if pb.value {
+        let pt = prove_com(*t, store.clone());
+        CProof {
+          com,
+          pre_store: store,
+          post_store: pt.post_store.clone(),
+          kind: CIfT(Box::new(pb), Box::new(pt)),
+        }
+      } else {
+        let pf = prove_com(*f, store.clone());
+        CProof {
+          com,
+          pre_store: store,
+          post_store: pf.post_store.clone(),
+          kind: CIfF(Box::new(pb), Box::new(pf)),
+        }
+      }
+    }
+    While(b, c) => {
+      let pb = prove_bexp(*b, store.clone());
+      if pb.value {
+        let pc = prove_com(*c, store.clone());
+        let pw = prove_com(com.clone(), pc.post_store.clone());
+        CProof {
+          com,
+          pre_store: store,
+          post_store: pw.post_store.clone(),
+          kind: CWhileT(Box::new(pb), Box::new(pc), Box::new(pw)),
+        }
+      } else {
+        CProof {
+          com,
+          pre_store: store.clone(),
+          post_store: store,
+          kind: CWhileF(Box::new(pb)),
+        }
+      }
+    }
   }
 }
 
@@ -634,9 +893,22 @@ mod test {
     assert_eq!(
       aexp_parser().easy_parse(s),
       Ok((
-        plus(AVar("x".to_owned()), times(AInt(2), AVar("y".to_owned()))),
+        plus(
+          AIdent("x".to_owned()),
+          times(AInt(2), AIdent("y".to_owned()))
+        ),
         ""
       ))
     )
+  }
+  #[test]
+  fn parse_less() {
+    let s = "1 < x";
+    assert!(bexp_parser().easy_parse(s).is_ok())
+  }
+  #[test]
+  fn parse_if() {
+    let s = "if 1 < x then x := 1 else x := 2";
+    assert!(com_parser(calc_expr_env()).easy_parse(s).is_ok())
   }
 }
